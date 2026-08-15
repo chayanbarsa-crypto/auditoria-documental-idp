@@ -1,0 +1,11 @@
+[server]
+# El modo IA adjunta el PDF nativo hasta 25 MB; por encima no aporta nada
+# y solo consume recursos del contenedor.
+maxUploadSize = 25
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+base = "light"
+primaryColor = "#1e3a8a"

@@ -1,0 +1,8 @@
+# Normaliza los ficheros de texto a LF en el repositorio (el servidor de
+# despliegue es Linux) y protege los binarios de cualquier conversión.
+* text=auto eol=lf
+
+*.pdf   binary
+*.png   binary
+*.jpg   binary
+*.xlsx  binary

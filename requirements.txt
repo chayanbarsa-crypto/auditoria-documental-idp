@@ -1,0 +1,18 @@
+# Núcleo (obligatorio)
+# >=1.60: usa el parámetro `width` (sustituye a `use_container_width`,
+# retirado a partir de 2026). Verificado sobre 1.61.1.
+streamlit>=1.60
+pandas>=2.0
+
+# Lectura de PDF (al menos uno de los dos)
+pymupdf>=1.24
+pypdf>=4.2
+
+# Generación del documento corregido / informe en PDF
+reportlab>=4.1
+
+# Modo "IA real" contra la API de Anthropic
+anthropic>=0.116
+
+# Carga de ANTHROPIC_API_KEY desde .env (opcional)
+python-dotenv>=1.0
