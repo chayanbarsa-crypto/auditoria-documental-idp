@@ -28,6 +28,7 @@ import io
 import json
 import os
 import re
+import zipfile
 from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone
 from typing import Any
@@ -132,8 +133,17 @@ EJEMPLOS: dict[str, dict[str, Any]] = {
     },
 }
 
+# Opción del selector que audita los dos ejemplos como un único lote: es la
+# que enseña el panel agregado sin obligar a subir nada.
+LOTE_EJEMPLO = "📊 Ambas a la vez (lote de 2)"
+
 MODELO_IA = "claude-opus-5"
 MAX_TOKENS_IA = 16_000
+
+# Tope de documentos por lote. La demo pública corre en un contenedor con
+# memoria contenida y, en modo IA, cada documento es una llamada a la API:
+# más vale un lote pequeño que una primera impresión con un timeout.
+MAX_DOCUMENTOS = 2
 # Límites de la API para adjuntar el PDF nativo (visión sobre firmas, sellos...).
 MAX_MB_PDF_NATIVO = 25
 MAX_PAGINAS_PDF_NATIVO = 100
@@ -1196,33 +1206,63 @@ def render_sidebar() -> dict[str, Any]:
             for regla in CATALOGO_REGLAS:
                 st.markdown(f"**{regla.nombre}** — {regla.descripcion}")
 
-        st.subheader("2. Documento")
-        fichero = st.file_uploader(
-            "Sube el PDF a auditar",
+        st.subheader("2. Documentos")
+        ficheros = st.file_uploader(
+            f"Sube hasta {MAX_DOCUMENTOS} PDFs",
             type=["pdf"],
-            help="El fichero se procesa en memoria; no se almacena en disco.",
-        )
+            accept_multiple_files=True,
+            help="Se procesan en memoria; no se almacenan en disco. Con dos "
+            "documentos verás además el panel agregado del lote.",
+        ) or []
 
-        # Documento de ejemplo: permite probar la demo sin traer un fichero
-        # propio. Incluye errores deliberados para que la auditoría tenga algo
-        # real que detectar.
+        # Streamlit no sabe limitar el número de ficheros, así que se valida
+        # aquí: mejor bloquear el análisis que recortar en silencio la
+        # selección del usuario.
+        exceso = len(ficheros) > MAX_DOCUMENTOS
+        if exceso:
+            st.error(
+                f"Has seleccionado {len(ficheros)} documentos. Esta demo admite "
+                f"un máximo de {MAX_DOCUMENTOS}; el procesamiento en lote sin "
+                "límite forma parte de la versión completa."
+            )
+
+        # Ejemplos: permiten probarlo sin traer ficheros propios, y el lote de
+        # dos enseña el panel agregado.
         disponibles = {
             k: v for k, v in EJEMPLOS.items() if os.path.exists(v["fichero"])
         }
         ejemplo = None
         if disponibles:
+            opciones = [None, *disponibles.keys()]
+            if len(disponibles) >= 2:
+                opciones.append(LOTE_EJEMPLO)
             ejemplo = st.selectbox(
-                "…o usa un documento de ejemplo",
-                options=[None, *disponibles.keys()],
+                "…o usa los documentos de ejemplo",
+                options=opciones,
                 format_func=lambda x: "— ninguno —" if x is None else x,
-                disabled=fichero is not None,
+                disabled=bool(ficheros),
                 help="Facturas de una página, pensadas para revisarlas a "
                 "simple vista y contrastar el informe.",
             )
-            if fichero is not None:
+            if ficheros:
                 ejemplo = None
 
-            if ejemplo:
+            if ejemplo == LOTE_EJEMPLO:
+                st.caption(
+                    "Audita las dos facturas de golpe y muestra el **panel "
+                    "agregado**: cumplimiento medio, ranking de documentos y "
+                    "qué regla concentra los fallos del lote."
+                )
+                for info in disponibles.values():
+                    with open(info["fichero"], "rb") as fh:
+                        st.download_button(
+                            f"⬇️ {os.path.basename(info['fichero'])}",
+                            data=fh.read(),
+                            file_name=os.path.basename(info["fichero"]),
+                            mime="application/pdf",
+                            width="stretch",
+                        )
+            elif ejemplo:
                 info = disponibles[ejemplo]
                 st.caption(info["descripcion"])
                 with open(info["fichero"], "rb") as fh:
@@ -1249,10 +1289,19 @@ def render_sidebar() -> dict[str, Any]:
             index=0,
         )
 
+        n_documentos = len(ficheros) or (
+            len(EJEMPLOS) if ejemplo == LOTE_EJEMPLO else (1 if ejemplo else 0)
+        )
+
         api_key = ""
         if motor.startswith("IA real"):
             if not HAS_ANTHROPIC:
                 st.warning("Instala el SDK: `pip install anthropic`")
+            if n_documentos > 1:
+                st.warning(
+                    f"El lote son {n_documentos} llamadas a la API, una por "
+                    "documento: el coste se multiplica."
+                )
             api_key = os.getenv("ANTHROPIC_API_KEY", "")
             if api_key:
                 st.success("Clave detectada en el entorno (ANTHROPIC_API_KEY).")
@@ -1263,16 +1312,19 @@ def render_sidebar() -> dict[str, Any]:
                     help="No se guarda: vive solo en la sesión del navegador.",
                 )
 
-        hay_documento = fichero is not None or ejemplo is not None
+        hay_documento = n_documentos > 0 and not exceso
 
         st.divider()
         lanzar = st.button(
-            "🚀 Ejecutar auditoría",
+            "🚀 Ejecutar auditoría"
+            + (f" ({n_documentos} documentos)" if n_documentos > 1 else ""),
             type="primary",
             width="stretch",
             disabled=not hay_documento or not nombres,
         )
-        if not hay_documento:
+        if exceso:
+            st.caption(f"Deja como máximo {MAX_DOCUMENTOS} documentos para continuar.")
+        elif not n_documentos:
             st.caption("Sube un PDF o elige un documento de ejemplo.")
         elif not nombres:
             st.caption("Selecciona al menos una regla del checklist.")
@@ -1282,7 +1334,7 @@ def render_sidebar() -> dict[str, Any]:
 
     return {
         "reglas": [REGLAS_POR_NOMBRE[n] for n in nombres],
-        "fichero": fichero,
+        "ficheros": ficheros,
         "ejemplo": ejemplo,
         "motor": motor,
         "api_key": api_key,
@@ -1290,19 +1342,28 @@ def render_sidebar() -> dict[str, Any]:
     }
 
 
-def obtener_documento(config: dict[str, Any]) -> tuple[str, bytes] | None:
-    """Devuelve (nombre, bytes) del PDF a auditar: el subido o el de ejemplo."""
-    fichero = config["fichero"]
-    if fichero is not None:
-        return fichero.name, fichero.getvalue()
+def obtener_documentos(config: dict[str, Any]) -> list[tuple[str, bytes]]:
+    """Lista de (nombre, bytes) a auditar: los subidos o los de ejemplo."""
+    ficheros = config.get("ficheros") or []
+    if ficheros:
+        return [(f.name, f.getvalue()) for f in ficheros[:MAX_DOCUMENTOS]]
 
     clave = config.get("ejemplo")
-    if clave and clave in EJEMPLOS:
-        ruta = EJEMPLOS[clave]["fichero"]
+    if not clave:
+        return []
+
+    rutas: list[str] = []
+    if clave == LOTE_EJEMPLO:
+        rutas = [v["fichero"] for v in EJEMPLOS.values()]
+    elif clave in EJEMPLOS:
+        rutas = [EJEMPLOS[clave]["fichero"]]
+
+    documentos = []
+    for ruta in rutas[:MAX_DOCUMENTOS]:
         if os.path.exists(ruta):
             with open(ruta, "rb") as fh:
-                return os.path.basename(ruta), fh.read()
-    return None
+                documentos.append((os.path.basename(ruta), fh.read()))
+    return documentos
 
 
 # ---------------------------------------------------------------------------
@@ -1456,6 +1517,142 @@ def render_descargas(res: ResultadoAuditoria, datos_pdf: bytes) -> None:
         st.json(res.to_dict())
 
 
+# --- Vistas de lote --------------------------------------------------------
+
+
+def resumen_lote(resultados: list[ResultadoAuditoria]) -> pd.DataFrame:
+    """Una fila por documento, ordenada de peor a mejor cumplimiento."""
+    filas = []
+    for res in resultados:
+        incumplimientos = [h for h in res.hallazgos if h.estado == "No cumple"]
+        peor = min(
+            (SEVERIDADES.index(h.severidad) for h in incumplimientos),
+            default=len(SEVERIDADES) - 1,
+        )
+        filas.append(
+            {
+                "Estado": "✅ Conforme" if not incumplimientos else "❌ Con incidencias",
+                "Documento": res.documento,
+                "Páginas": res.paginas,
+                "Cumplimiento": res.cumplimiento,
+                "Incidencias": len(incumplimientos),
+                "Severidad máxima": SEVERIDADES[peor] if incumplimientos else "—",
+            }
+        )
+    return pd.DataFrame(filas).sort_values("Cumplimiento").reset_index(drop=True)
+
+
+def render_lote(resultados: list[ResultadoAuditoria]) -> None:
+    """Panel agregado: lo que solo se ve cuando hay más de un documento."""
+    total_incidencias = sum(
+        1 for res in resultados for h in res.hallazgos if h.estado == "No cumple"
+    )
+    conformes = sum(
+        1
+        for res in resultados
+        if not any(h.estado == "No cumple" for h in res.hallazgos)
+    )
+    medio = round(sum(r.cumplimiento for r in resultados) / len(resultados))
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Documentos procesados", len(resultados))
+    c2.metric("Cumplimiento medio", f"{medio} %")
+    c3.metric("Conformes", f"{conformes} de {len(resultados)}")
+    c4.metric("Incidencias totales", total_incidencias)
+
+    st.markdown("### Ranking de documentos")
+    st.caption("Ordenado de menor a mayor cumplimiento: arriba, lo que hay que revisar antes.")
+    st.dataframe(
+        resumen_lote(resultados),
+        width="stretch",
+        hide_index=True,
+        column_config={
+            "Cumplimiento": st.column_config.ProgressColumn(
+                "Cumplimiento", format="%d %%", min_value=0, max_value=100
+            ),
+            "Páginas": st.column_config.NumberColumn(width="small"),
+            "Incidencias": st.column_config.NumberColumn(width="small"),
+        },
+    )
+
+    # El dato que solo aparece con volumen: dónde se concentran los fallos.
+    conteo: dict[str, int] = {}
+    for res in resultados:
+        for h in res.hallazgos:
+            if h.estado == "No cumple":
+                conteo[h.regla] = conteo.get(h.regla, 0) + 1
+    if conteo:
+        st.markdown("### Incidencias por regla en todo el lote")
+        st.caption(
+            "Con volumen real, este gráfico es el que dice dónde atacar primero: "
+            "la regla que más se repite suele ser un problema de proceso, no del documento."
+        )
+        serie = pd.Series(conteo).sort_values(ascending=False)
+        st.bar_chart(serie, height=240)
+
+
+def render_descargas_lote(
+    resultados: list[ResultadoAuditoria], documentos: list[tuple[str, bytes]]
+) -> None:
+    """Entregables consolidados del lote: CSV, JSON y ZIP de corregidos."""
+    c1, c2, c3 = st.columns(3)
+
+    csv = resumen_lote(resultados).to_csv(index=False, sep=";").encode("utf-8-sig")
+    c1.download_button(
+        "⬇️ Resumen del lote (CSV)",
+        data=csv,
+        file_name="auditoria_lote_resumen.csv",
+        mime="text/csv",
+        width="stretch",
+        help="Separador ';' y BOM: se abre directamente en Excel en español.",
+    )
+
+    consolidado = {
+        "fecha_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "documentos": len(resultados),
+        "cumplimiento_medio": round(
+            sum(r.cumplimiento for r in resultados) / len(resultados)
+        ),
+        "auditorias": [r.to_dict() for r in resultados],
+    }
+    c2.download_button(
+        "⬇️ Reporte consolidado (JSON)",
+        data=json.dumps(consolidado, indent=2, ensure_ascii=False).encode("utf-8"),
+        file_name="auditoria_lote.json",
+        mime="application/json",
+        width="stretch",
+    )
+
+    # ZIP con los documentos corregidos: el entregable natural de un lote.
+    buffer = io.BytesIO()
+    incluidos = 0
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for res, (_, datos) in zip(resultados, documentos):
+            corregido = construir_pdf_corregido(datos, res)
+            if corregido:
+                zf.writestr(f"corregido_{nombre_base(res.documento)}.pdf", corregido)
+                incluidos += 1
+        zf.writestr(
+            "resumen.csv", resumen_lote(resultados).to_csv(index=False, sep=";")
+        )
+
+    if incluidos:
+        c3.download_button(
+            "⬇️ Documentos corregidos (ZIP)",
+            data=buffer.getvalue(),
+            file_name="auditoria_lote_corregidos.zip",
+            mime="application/zip",
+            width="stretch",
+        )
+    else:
+        c3.button(
+            "⬇️ Documentos corregidos (ZIP)",
+            disabled=True,
+            width="stretch",
+            help="Requiere reportlab: pip install reportlab",
+        )
+
+
 def render_banner_comercial() -> None:
     """Pie de página / banner comercial de la demo."""
     st.divider()
@@ -1472,7 +1669,8 @@ def render_banner_comercial() -> None:
     💡 ¿Quieres ver funciones avanzadas?
   </div>
   <div style="font-size:0.97rem; opacity:0.93;">
-    Procesamiento en lote, integración vía API con CRM/ERP o reglas personalizadas.
+    Procesamiento en lote sin límite, conciliación entre documentos,
+    integración vía API con CRM/ERP o reglas personalizadas.
   </div>
   <div style="font-size:1.05rem; font-weight:700; margin-top:12px;">
     📞 Contacta directamente con el desarrollador:
@@ -1490,64 +1688,91 @@ def render_banner_comercial() -> None:
 
 
 def ejecutar_auditoria(config: dict[str, Any]) -> None:
-    """Orquesta lectura, análisis y almacenamiento del resultado en sesión."""
-    documento = obtener_documento(config)
-    if documento is None:
+    """Orquesta lectura y análisis de todos los documentos del lote."""
+    documentos = obtener_documentos(config)
+    if not documentos:
         st.error("No hay ningún documento seleccionado.")
         return
-    nombre_documento, datos = documento
 
-    if not es_pdf(datos):
-        st.error("El fichero subido no es un PDF válido (cabecera incorrecta).")
+    usa_ia = config["motor"].startswith("IA real")
+    if usa_ia and not config["api_key"]:
+        st.error(
+            "Introduce tu ANTHROPIC_API_KEY en la barra lateral o defínela "
+            "como variable de entorno."
+        )
         return
 
-    with st.status("Procesando documento…", expanded=True) as estado:
-        st.write("📖 Extrayendo texto, páginas y metadatos…")
-        try:
-            paginas_texto, metadatos = leer_pdf(datos)
-        except Exception as exc:
-            estado.update(label="Error al leer el PDF", state="error")
-            st.error(f"No se ha podido leer el documento: {exc}")
-            return
-
-        if not HAS_PYMUPDF and not HAS_PYPDF:
-            st.warning(
-                "Sin `pymupdf` ni `pypdf` instalados: la extracción de texto es "
-                "limitada. Instala uno de los dos para un análisis completo."
-            )
-
-        st.write(
-            f"🔎 Aplicando {len(config['reglas'])} regla(s) sobre "
-            f"{len(paginas_texto)} página(s)…"
+    if not HAS_PYMUPDF and not HAS_PYPDF:
+        st.warning(
+            "Sin `pymupdf` ni `pypdf` instalados: la extracción de texto es "
+            "limitada. Instala uno de los dos para un análisis completo."
         )
-        try:
-            if config["motor"].startswith("IA real"):
-                if not config["api_key"]:
-                    estado.update(label="Falta la clave de API", state="error")
-                    st.error(
-                        "Introduce tu ANTHROPIC_API_KEY en la barra lateral o "
-                        "defínela como variable de entorno."
+
+    etiqueta = (
+        "Procesando documento…"
+        if len(documentos) == 1
+        else f"Procesando lote de {len(documentos)} documentos…"
+    )
+    resultados: list[ResultadoAuditoria] = []
+    procesados: list[tuple[str, bytes]] = []
+
+    with st.status(etiqueta, expanded=True) as estado:
+        for indice, (nombre, datos) in enumerate(documentos, start=1):
+            prefijo = f"[{indice}/{len(documentos)}] " if len(documentos) > 1 else ""
+
+            if not es_pdf(datos):
+                st.write(f"{prefijo}⚠️ «{nombre}» no es un PDF válido; se omite.")
+                continue
+
+            st.write(f"{prefijo}📖 Extrayendo texto de «{nombre}»…")
+            try:
+                paginas_texto, metadatos = leer_pdf(datos)
+            except Exception as exc:
+                st.write(f"{prefijo}⚠️ No se ha podido leer «{nombre}»: {exc}")
+                continue
+
+            st.write(
+                f"{prefijo}🔎 Aplicando {len(config['reglas'])} regla(s) sobre "
+                f"{len(paginas_texto)} página(s)…"
+            )
+            try:
+                if usa_ia:
+                    st.write(f"{prefijo}🤖 Consultando al modelo {MODELO_IA}…")
+                    resultado = auditar_con_ia(
+                        datos, nombre, paginas_texto, metadatos,
+                        config["reglas"], config["api_key"],
                     )
-                    return
-                st.write(f"🤖 Consultando al modelo {MODELO_IA}…")
-                resultado = auditar_con_ia(
-                    datos, nombre_documento, paginas_texto, metadatos,
-                    config["reglas"], config["api_key"],
-                )
-            else:
-                resultado = auditar_por_reglas(
-                    datos, nombre_documento, paginas_texto, metadatos, config["reglas"]
-                )
-        except Exception as exc:
-            estado.update(label="Error durante el análisis", state="error")
-            st.error(f"La auditoría no ha podido completarse: {exc}")
+                else:
+                    resultado = auditar_por_reglas(
+                        datos, nombre, paginas_texto, metadatos, config["reglas"]
+                    )
+            except Exception as exc:
+                # Un documento problemático no debe tumbar el lote entero.
+                st.write(f"{prefijo}⚠️ Fallo al auditar «{nombre}»: {exc}")
+                continue
+
+            resultados.append(resultado)
+            procesados.append((nombre, datos))
+
+        if not resultados:
+            estado.update(label="No se ha podido auditar ningún documento", state="error")
+            st.error(
+                "Ninguno de los documentos ha podido procesarse. Revisa que sean "
+                "PDFs válidos."
+            )
             return
+
+        if len(resultados) < len(documentos):
+            st.warning(
+                f"Se han auditado {len(resultados)} de {len(documentos)} documentos; "
+                "los demás se han omitido por los motivos indicados arriba."
+            )
 
         st.write("🧾 Consolidando hallazgos y entregables…")
         estado.update(label="Auditoría completada", state="complete", expanded=False)
 
-    st.session_state["resultado"] = resultado
-    st.session_state["pdf_bytes"] = datos
+    st.session_state["resultados"] = resultados
+    st.session_state["documentos"] = procesados
 
 
 def main() -> None:
@@ -1566,21 +1791,22 @@ def main() -> None:
     if config["lanzar"]:
         ejecutar_auditoria(config)
 
-    resultado: ResultadoAuditoria | None = st.session_state.get("resultado")
-    datos_pdf: bytes | None = st.session_state.get("pdf_bytes")
+    resultados: list[ResultadoAuditoria] = st.session_state.get("resultados") or []
+    documentos: list[tuple[str, bytes]] = st.session_state.get("documentos") or []
 
-    if resultado is None or datos_pdf is None:
+    if not resultados or not documentos:
         # Estado inicial: explica la propuesta de valor antes del primer análisis.
         st.info(
-            "👈 **Para probarlo:** elige uno de los dos documentos de ejemplo en "
-            "la barra lateral, descárgalo para verlo con tus propios ojos y pulsa "
+            "👈 **Para probarlo:** elige los documentos de ejemplo en la barra "
+            "lateral, descárgalos para verlos con tus propios ojos y pulsa "
             "**Ejecutar auditoría**. Podrás contrastar cada hallazgo del informe "
-            "con el papel. No hace falta clave de API."
+            f"con el papel. Admite hasta {MAX_DOCUMENTOS} documentos a la vez y "
+            "no hace falta clave de API."
         )
         c1, c2, c3 = st.columns(3)
         c1.markdown(
             "#### 1. Ingesta\n"
-            "Lectura del PDF en memoria: páginas, texto y metadatos. "
+            "Lectura de los PDFs en memoria: páginas, texto y metadatos. "
             "Sin persistencia en disco."
         )
         c2.markdown(
@@ -1590,18 +1816,48 @@ def main() -> None:
         )
         c3.markdown(
             "#### 3. Entregables\n"
-            "Reporte estructurado en JSON para integrar en tu ERP/CRM y "
-            "documento corregido con el informe anexado."
+            "Reporte JSON para integrar en tu ERP/CRM, CSV del lote y "
+            "documentos corregidos con el informe anexado."
         )
         render_banner_comercial()
         return
 
-    st.subheader(f"Resultados — `{resultado.documento}`")
-    st.caption(
-        f"Motor: **{resultado.motor}**"
-        + (f" · Modelo: `{resultado.modelo}`" if resultado.modelo else "")
-        + f" · Ejecutado: {resultado.fecha_utc} UTC"
-    )
+    # --- Vista de lote: solo cuando hay más de un documento ---------------
+    if len(resultados) > 1:
+        st.subheader(f"Resultados del lote — {len(resultados)} documentos")
+        st.caption(
+            f"Motor: **{resultados[0].motor}**"
+            + (f" · Modelo: `{resultados[0].modelo}`" if resultados[0].modelo else "")
+            + f" · Ejecutado: {resultados[0].fecha_utc} UTC"
+        )
+        render_lote(resultados)
+        st.divider()
+        st.markdown("### Entregables del lote")
+        render_descargas_lote(resultados, documentos)
+        st.divider()
+        st.markdown("### Detalle por documento")
+        # De peor a mejor: al abrirse muestra el documento más problemático,
+        # que es el que alguien querría inspeccionar primero.
+        orden = sorted(
+            range(len(resultados)), key=lambda i: resultados[i].cumplimiento
+        )
+        elegido = st.selectbox(
+            "Documento a inspeccionar",
+            options=orden,
+            format_func=lambda i: f"{resultados[i].documento} — "
+            f"{resultados[i].cumplimiento} % de cumplimiento",
+        )
+        resultado = resultados[elegido]
+        datos_pdf = documentos[elegido][1]
+    else:
+        resultado = resultados[0]
+        datos_pdf = documentos[0][1]
+        st.subheader(f"Resultados — `{resultado.documento}`")
+        st.caption(
+            f"Motor: **{resultado.motor}**"
+            + (f" · Modelo: `{resultado.modelo}`" if resultado.modelo else "")
+            + f" · Ejecutado: {resultado.fecha_utc} UTC"
+        )
 
     render_metricas(resultado)
     st.divider()

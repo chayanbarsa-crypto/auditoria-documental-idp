@@ -18,6 +18,11 @@ estructurado y el documento con la auditoría anexada.
 | **Ingesta** | Lectura del PDF en memoria (PyMuPDF / pypdf): páginas, texto y metadatos. Sin persistencia en disco. |
 | **Validación** | 6 reglas de negocio configurables: firmas, fechas, importes, estructura, identificadores fiscales y protección de datos. Cada incidencia se ancla a su página y cita la evidencia. |
 | **Salida** | KPIs de cumplimiento, tabla de incidencias con severidad y evidencia, JSON para integrar en ERP/CRM y PDF corregido. |
+| **Lote** | Con más de un documento aparece el panel agregado: cumplimiento medio, ranking de documentos y en qué regla se concentran los fallos. |
+
+> La demo admite **hasta 2 documentos** por ejecución: corre en un contenedor
+> gratuito y, en modo IA, cada documento es una llamada a la API. El
+> procesamiento en lote sin límite es parte de la versión completa.
 
 ### Dos motores de análisis
 
@@ -65,6 +70,7 @@ que cualquiera pueda revisarlas a simple vista y contrastar el informe:
 |---|---|
 | `ejemplo/ejemplo_conforme.pdf` | **0 incumplimientos**, 100 % de cumplimiento |
 | `ejemplo/ejemplo_con_errores.pdf` | **7 incumplimientos**, uno por cada defecto |
+| Las dos como lote | **50 %** de cumplimiento medio, 1 conforme de 2, 7 incidencias |
 
 Los 7 defectos deliberados del segundo documento:
 
@@ -123,5 +129,19 @@ ejemplo/ejemplo_con_errores.pdf   Factura con 7 defectos deliberados
 
 ---
 
-💡 **¿Funciones avanzadas?** Procesamiento en lote, integración vía API con
-CRM/ERP o reglas personalizadas. Contacto: **603 460 945**
+## Hoja de ruta (versión completa)
+
+Lo que la demo deja fuera a propósito:
+
+- **Lote sin límite** — colas de cientos de documentos con reanudación.
+- **Conciliación cruzada** — contrastar documentos *entre sí* (que el importe
+  de la factura coincida con el del contrato, que el CIF sea el mismo en todo
+  el expediente). Requiere definir qué campos deben casar entre qué tipos de
+  documento: es trabajo a medida de cada cliente.
+- **Integración vía API** con el CRM/ERP y reglas de negocio propias.
+
+---
+
+💡 **¿Funciones avanzadas?** Procesamiento en lote sin límite, conciliación
+entre documentos, integración vía API con CRM/ERP o reglas personalizadas.
+Contacto: **603 460 945**
