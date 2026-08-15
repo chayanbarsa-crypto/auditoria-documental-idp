@@ -24,11 +24,9 @@ Autor: Jordy — Demo comercial. Contacto: 603 460 945
 from __future__ import annotations
 
 import base64
-import hashlib
 import io
 import json
 import os
-import random
 import re
 from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone
@@ -106,7 +104,33 @@ APP_SUBTITLE = (
 CONTACTO_TELEFONO = "603 460 945"
 
 # Modelo por defecto para el modo IA real.
-PDF_EJEMPLO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ejemplo", "contrato_demo.pdf")
+_DIR_EJEMPLOS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ejemplo")
+
+# Documentos de demostración. El "conforme" debe dar 0 incumplimientos y el
+# otro exactamente las incidencias listadas, de modo que quien los descargue
+# pueda contrastar el informe con el papel.
+EJEMPLOS: dict[str, dict[str, Any]] = {
+    "✅ Factura conforme (sin errores)": {
+        "fichero": os.path.join(_DIR_EJEMPLOS, "ejemplo_conforme.pdf"),
+        "descripcion": "Todos los campos correctos. La auditoría debe dar "
+        "**0 incumplimientos** y 100 % de cumplimiento.",
+        "errores": [],
+    },
+    "⚠️ Factura con 7 errores": {
+        "fichero": os.path.join(_DIR_EJEMPLOS, "ejemplo_con_errores.pdf"),
+        "descripcion": "Misma factura con defectos deliberados, todos "
+        "visibles a simple vista.",
+        "errores": [
+            "**Importes** — TOTAL 1.310,00 € cuando 1.000,00 + 210,00 = 1.210,00 €",
+            "**Fechas** — fin (15/02/2026) anterior al inicio (01/03/2026)",
+            "**Estructura** — Nº de factura sin rellenar: `[PENDIENTE]`",
+            "**Identificadores** — CIF del emisor: `(no consta)`",
+            "**Identificadores** — IBAN de 23 caracteres (los españoles tienen 24)",
+            "**Firmas** — la firma del receptor está en blanco",
+            "**Protección de datos** — cita la LOPD 15/1999, derogada en 2018",
+        ],
+    },
+}
 
 MODELO_IA = "claude-opus-5"
 MAX_TOKENS_IA = 16_000
@@ -207,12 +231,9 @@ CATALOGO_REGLAS: list[Regla] = [
 ]
 
 REGLAS_POR_NOMBRE = {r.nombre: r for r in CATALOGO_REGLAS}
-REGLAS_POR_DEFECTO = [
-    "Verificación de Firmas",
-    "Cumplimiento de Fechas",
-    "Validación de Importes",
-    "Estructura de Datos",
-]
+# Todas activas por defecto: así el checklist cubre los 7 errores del
+# documento de ejemplo y quien lo revise ve el recuento completo.
+REGLAS_POR_DEFECTO = [r.nombre for r in CATALOGO_REGLAS]
 
 
 # ---------------------------------------------------------------------------
@@ -263,33 +284,59 @@ class ResultadoAuditoria:
 # ---------------------------------------------------------------------------
 
 
-def leer_pdf(datos: bytes) -> tuple[int, str, dict[str, Any]]:
-    """Devuelve (nº de páginas, texto extraído, metadatos) de un PDF en memoria.
+def leer_pdf(datos: bytes) -> tuple[list[str], dict[str, Any]]:
+    """Devuelve (texto de cada página, metadatos) de un PDF en memoria.
 
     Prueba PyMuPDF y, si no está disponible, pypdf. Si ninguno está instalado
     devuelve valores neutros para que la demo siga siendo utilizable.
     """
     if HAS_PYMUPDF:
         with fitz.open(stream=datos, filetype="pdf") as doc:
-            paginas = doc.page_count
-            texto = "\n".join(pagina.get_text() for pagina in doc)
+            paginas = [pagina.get_text() for pagina in doc]
             meta = {k: v for k, v in (doc.metadata or {}).items() if v}
-        return paginas, texto, meta
+        return paginas, meta
 
     if HAS_PYPDF:
         lector = PdfReader(io.BytesIO(datos))
-        paginas = len(lector.pages)
-        texto = "\n".join((p.extract_text() or "") for p in lector.pages)
+        paginas = [(p.extract_text() or "") for p in lector.pages]
         meta = {
             k.lstrip("/"): str(v)
             for k, v in (lector.metadata or {}).items()
             if v
         }
-        return paginas, texto, meta
+        return paginas, meta
 
     # Sin librería de PDF: estimación grosera del nº de páginas por marcadores.
-    paginas = max(1, datos.count(b"/Type /Page") or datos.count(b"/Type/Page"))
-    return paginas, "", {"aviso": "Instala pymupdf o pypdf para extraer texto."}
+    n = max(1, datos.count(b"/Type /Page") or datos.count(b"/Type/Page"))
+    return [""] * n, {"aviso": "Instala pymupdf o pypdf para extraer texto."}
+
+
+def extraer_campos(paginas: list[str]) -> dict[str, tuple[str, int]]:
+    """Empareja «Etiqueta:» con su valor y devuelve {etiqueta: (valor, página)}.
+
+    Los extractores de PDF devuelven la etiqueta y su valor en líneas separadas
+    cuando están en columnas distintas, así que se admiten ambas formas:
+    «Etiqueta: valor» en una línea y «Etiqueta:» seguida del valor en la
+    siguiente. La clave se normaliza a minúsculas sin espacios sobrantes.
+    """
+    campos: dict[str, tuple[str, int]] = {}
+    for n_pagina, texto in enumerate(paginas, start=1):
+        lineas = [ln.strip() for ln in texto.splitlines()]
+        for i, linea in enumerate(lineas):
+            if ":" not in linea:
+                continue
+            etiqueta, _, resto = linea.partition(":")
+            etiqueta = etiqueta.strip().lower()
+            if not etiqueta or len(etiqueta) > 40:
+                continue
+            valor = resto.strip()
+            if not valor:  # el valor viaja en la línea siguiente
+                valor = lineas[i + 1].strip() if i + 1 < len(lineas) else ""
+                # Si lo siguiente es otra etiqueta, este campo está vacío.
+                if valor.endswith(":"):
+                    valor = ""
+            campos.setdefault(etiqueta, (valor, n_pagina))
+    return campos
 
 
 def es_pdf(datos: bytes) -> bool:
@@ -298,218 +345,452 @@ def es_pdf(datos: bytes) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# 5. MOTOR A — SIMULACIÓN (sin coste, determinista por documento)
+# 5. MOTOR A — REGLAS DETERMINISTAS (sin IA, sin coste)
 # ---------------------------------------------------------------------------
+# Cada regla inspecciona el texto realmente extraído del PDF y cita en la
+# evidencia lo que ha encontrado, de forma que cualquiera pueda contrastar el
+# informe contra el documento. Si un campo no aparece, la regla lo declara
+# «no evaluable» en lugar de inventarse un hallazgo.
 
-# Plantillas de hallazgo por regla: (severidad, descripción, evidencia, sugerencia)
-PLANTILLAS_SIMULACION: dict[str, list[tuple[str, str, str, str]]] = {
-    "R01": [
-        (
-            "Crítica",
-            "Falta la firma del representante legal en el bloque de cierre.",
-            "Recuadro 'Firma del representante' vacío.",
-            "Recabar firma manuscrita o electrónica cualificada antes de archivar.",
-        ),
-        (
-            "Media",
-            "Firma presente pero sin identificación legible del firmante.",
-            "Rúbrica sin nombre ni DNI asociado.",
-            "Añadir nombre completo y NIF bajo la rúbrica.",
-        ),
-        (
-            "Baja",
-            "El sello corporativo se solapa con el texto del párrafo final.",
-            "Sello desplazado sobre la línea de importe.",
-            "Reubicar el sello en el margen inferior derecho.",
-        ),
-    ],
-    "R02": [
-        (
-            "Alta",
-            "La fecha de fin de vigencia es anterior a la fecha de inicio.",
-            "Inicio 01/09/2025 — Fin 15/08/2025.",
-            "Corregir la fecha de fin o justificar la prórroga retroactiva.",
-        ),
-        (
-            "Media",
-            "Convivencia de dos formatos de fecha en el mismo documento.",
-            "Se detecta DD/MM/AAAA y AAAA-MM-DD.",
-            "Homogeneizar a DD/MM/AAAA en todo el documento.",
-        ),
-        (
-            "Informativa",
-            "El documento supera los 12 meses desde su emisión.",
-            "Fecha de emisión fuera del ejercicio corriente.",
-            "Verificar si procede una revisión anual del expediente.",
-        ),
-    ],
-    "R03": [
-        (
-            "Crítica",
-            "El total no cuadra con la suma de base imponible e impuestos.",
-            "Base 1.240,00 € + IVA 260,40 € ≠ Total 1.520,40 €.",
-            "Recalcular el total: el importe correcto es 1.500,40 €.",
-        ),
-        (
-            "Alta",
-            "Se aplica un tipo impositivo distinto al esperado para el concepto.",
-            "IVA al 10 % sobre un servicio de consultoría.",
-            "Revisar el tipo aplicable (21 %) y reemitir si procede.",
-        ),
-        (
-            "Baja",
-            "Uso inconsistente del separador de miles y decimales.",
-            "Coexisten 1,240.00 y 1.240,00.",
-            "Unificar al formato español: 1.240,00 €.",
-        ),
-    ],
-    "R04": [
-        (
-            "Alta",
-            "Campo obligatorio sin rellenar en la cabecera del documento.",
-            "Marcador '[PENDIENTE]' en el campo 'Nº de expediente'.",
-            "Completar el identificador antes de la firma.",
-        ),
-        (
-            "Media",
-            "La numeración de páginas no es continua.",
-            "Salto detectado entre 'Pág. 3' y 'Pág. 5'.",
-            "Regenerar el documento con paginación continua.",
-        ),
-        (
-            "Baja",
-            "Falta el anexo referenciado en el cuerpo del texto.",
-            "Se cita 'Anexo II' pero el documento no lo incluye.",
-            "Adjuntar el Anexo II o eliminar la referencia.",
-        ),
-    ],
-    "R05": [
-        (
-            "Crítica",
-            "El dígito de control del CIF no valida.",
-            "CIF declarado con checksum incorrecto.",
-            "Verificar el identificador contra el censo y corregirlo.",
-        ),
-        (
-            "Alta",
-            "IBAN con longitud incorrecta para el país indicado.",
-            "IBAN español con 22 caracteres en lugar de 24.",
-            "Solicitar de nuevo el certificado de titularidad bancaria.",
-        ),
-        (
-            "Media",
-            "No consta el NIF del receptor del documento.",
-            "Bloque 'Datos del destinatario' incompleto.",
-            "Completar el NIF del destinatario.",
-        ),
-    ],
-    "R06": [
-        (
-            "Crítica",
-            "Datos personales sin anonimizar en un documento de circulación externa.",
-            "DNI y domicilio completos visibles en el cuerpo.",
-            "Aplicar seudonimización o redacción parcial antes de distribuir.",
-        ),
-        (
-            "Alta",
-            "Falta la cláusula informativa de protección de datos.",
-            "No se localiza mención al RGPD ni al responsable del tratamiento.",
-            "Incorporar la cláusula informativa estándar al pie.",
-        ),
-        (
-            "Baja",
-            "La cláusula de protección de datos está desactualizada.",
-            "Se cita la LOPD de 1999 en lugar de la LOPDGDD 3/2018.",
-            "Actualizar la referencia normativa.",
-        ),
-    ],
+RE_FECHA = re.compile(r"\b(\d{2})/(\d{2})/(\d{4})\b")
+RE_FECHA_ISO = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
+RE_IMPORTE = re.compile(r"-?\d{1,3}(?:\.\d{3})*,\d{2}|-?\d+,\d{2}")
+RE_IMPORTE_ANGLOSAJON = re.compile(r"\b\d{1,3}(?:,\d{3})+\.\d{2}\b")
+RE_CIF = re.compile(r"^[A-HJNP-SUVW]-?\d{7}[0-9A-J]$", re.IGNORECASE)
+RE_NIF = re.compile(r"^\d{8}[A-Z]$", re.IGNORECASE)
+RE_PLACEHOLDER = re.compile(
+    r"\[[^\]]{0,40}(?:pendiente|pdte|rellenar|completar|tbd|por definir)[^\]]{0,40}\]|X{4,}",
+    re.IGNORECASE,
+)
+RE_PAGINA = re.compile(r"P[áa]g(?:ina)?\.?\s*(\d+)", re.IGNORECASE)
+
+# Valores que, apareciendo en un campo, significan «aquí no hay nada».
+VALORES_VACIOS = {
+    "", "-", "—", "--", "n/a", "na", "no consta", "(no consta)",
+    "pendiente", "[pendiente]", "por determinar",
 }
 
 
-def auditar_simulado(
-    datos: bytes,
-    nombre: str,
-    paginas: int,
-    texto: str,
-    metadatos: dict[str, Any],
-    reglas: list[Regla],
-) -> ResultadoAuditoria:
-    """Genera un resultado verosímil y **determinista** para el documento dado.
+def _es_vacio(valor: str) -> bool:
+    """True si el valor está en blanco o es un marcador de hueco."""
+    limpio = valor.strip().lower()
+    if limpio in VALORES_VACIOS:
+        return True
+    # Líneas de firma sin rellenar: solo guiones bajos, puntos o espacios.
+    return bool(limpio) and all(c in "_.· " for c in limpio)
 
-    El generador se siembra con el hash del fichero, de modo que el mismo PDF
-    con el mismo checklist produce siempre el mismo informe: imprescindible
-    para que una demo comercial sea reproducible delante del cliente.
+
+def _campo(campos: dict[str, tuple[str, int]], *prefijos: str) -> tuple[str, int] | None:
+    """Primer campo cuya etiqueta empiece por alguno de los prefijos dados."""
+    for prefijo in prefijos:
+        for etiqueta, valor in campos.items():
+            if etiqueta.startswith(prefijo):
+                return valor
+    return None
+
+
+def _a_numero(texto: str) -> float | None:
+    """Convierte «1.210,00 EUR» en 1210.0. None si no hay ningún importe."""
+    encontrado = RE_IMPORTE.search(texto)
+    if not encontrado:
+        return None
+    return float(encontrado.group(0).replace(".", "").replace(",", "."))
+
+
+def _formato_es(numero: float) -> str:
+    """1210.0 -> «1.210,00» (separador de miles y decimal españoles)."""
+    return f"{numero:,.2f}".translate(str.maketrans({",": ".", ".": ","}))
+
+
+def _a_fecha(texto: str) -> datetime | None:
+    """Convierte la primera fecha DD/MM/AAAA encontrada; None si no hay."""
+    encontrado = RE_FECHA.search(texto)
+    if not encontrado:
+        return None
+    dia, mes, anio = (int(g) for g in encontrado.groups())
+    try:
+        return datetime(anio, mes, dia)
+    except ValueError:  # fecha imposible, p. ej. 31/02
+        return None
+
+
+def _lineas_con_etiqueta(paginas: list[str], etiqueta: str) -> list[tuple[str, int]]:
+    """Todos los valores de una etiqueta repetida -> [(valor, página), ...].
+
+    `extraer_campos` se queda con la primera aparición de cada etiqueta; esta
+    función sirve para las que salen varias veces (dos firmas, dos CIF...).
     """
-    semilla = int(hashlib.sha256(datos).hexdigest()[:16], 16)
-    rnd = random.Random(semilla)
+    patron = re.compile(rf"^{re.escape(etiqueta)}\s*:?\s*(.*)$", re.IGNORECASE)
+    resultados: list[tuple[str, int]] = []
+    for n_pagina, texto in enumerate(paginas, start=1):
+        lineas = [ln.strip() for ln in texto.splitlines()]
+        for i, linea in enumerate(lineas):
+            coincidencia = patron.match(linea)
+            if not coincidencia:
+                continue
+            valor = coincidencia.group(1).strip()
+            if not valor and i + 1 < len(lineas) and not lineas[i + 1].endswith(":"):
+                valor = lineas[i + 1].strip()
+            resultados.append((valor, n_pagina))
+    return resultados
 
-    hallazgos: list[Hallazgo] = []
-    for regla in reglas:
-        plantillas = PLANTILLAS_SIMULACION.get(regla.id, [])
-        if not plantillas:
-            continue
-        # Entre 0 y 2 incidencias por regla: no todo documento falla en todo.
-        n = rnd.choices([0, 1, 2], weights=[35, 45, 20])[0]
-        for severidad, descripcion, evidencia, sugerencia in rnd.sample(
-            plantillas, k=min(n, len(plantillas))
-        ):
+
+def _hallazgo(
+    regla: Regla,
+    pagina: int,
+    severidad: str,
+    descripcion: str,
+    evidencia: str,
+    sugerencia: str,
+) -> Hallazgo:
+    return Hallazgo(
+        regla=regla.nombre,
+        pagina=pagina,
+        severidad=severidad,
+        estado="No cumple",
+        descripcion=descripcion,
+        evidencia=evidencia,
+        sugerencia=sugerencia,
+    )
+
+
+def _no_evaluable(regla: Regla, motivo: str) -> Hallazgo:
+    """La regla no ha encontrado los campos que necesita para pronunciarse."""
+    return Hallazgo(
+        regla=regla.nombre,
+        pagina=0,
+        severidad="Informativa",
+        estado="Requiere revisión",
+        descripcion=f"No evaluable automáticamente: {motivo}.",
+        evidencia="El motor de reglas no localiza los campos necesarios.",
+        sugerencia="Revisión manual, o usa el motor de IA para documentos "
+        "con estructura libre.",
+    )
+
+
+# --- Una función por regla -------------------------------------------------
+
+
+def _regla_firmas(regla, campos, paginas, texto) -> list[Hallazgo]:
+    firmas = _lineas_con_etiqueta(paginas, "Fdo.") + _lineas_con_etiqueta(paginas, "Firmado por")
+    if not firmas:
+        return [_no_evaluable(regla, "no se localiza ningún bloque de firma")]
+
+    hallazgos = []
+    for valor, pagina in firmas:
+        if _es_vacio(valor):
             hallazgos.append(
-                Hallazgo(
-                    regla=regla.nombre,
-                    pagina=rnd.randint(1, max(1, paginas)),
-                    severidad=severidad,
-                    estado="No cumple"
-                    if severidad in ("Crítica", "Alta")
-                    else "Requiere revisión",
-                    descripcion=descripcion,
-                    evidencia=evidencia,
-                    sugerencia=sugerencia,
+                _hallazgo(
+                    regla, pagina, "Crítica",
+                    "Bloque de firma sin firmante identificado.",
+                    f"Se lee «Fdo.: {valor or '(en blanco)'}».",
+                    "Recabar la firma y el nombre completo del firmante.",
+                )
+            )
+        elif not (RE_NIF.search(valor.replace(" ", "")) or "NIF" in valor.upper()):
+            hallazgos.append(
+                _hallazgo(
+                    regla, pagina, "Media",
+                    "Firma sin documento identificativo del firmante.",
+                    f"Se lee «Fdo.: {valor}», sin NIF asociado.",
+                    "Añadir el NIF junto al nombre del firmante.",
+                )
+            )
+    return hallazgos
+
+
+def _regla_fechas(regla, campos, paginas, texto) -> list[Hallazgo]:
+    hallazgos = []
+    inicio = _campo(campos, "fecha de inicio", "fecha inicio")
+    fin = _campo(campos, "fecha de fin", "fecha fin", "fecha de vencimiento")
+
+    if inicio and fin:
+        f_inicio, f_fin = _a_fecha(inicio[0]), _a_fecha(fin[0])
+        if f_inicio and f_fin and f_fin < f_inicio:
+            hallazgos.append(
+                _hallazgo(
+                    regla, fin[1], "Alta",
+                    "La fecha de fin es anterior a la fecha de inicio.",
+                    f"Inicio {inicio[0]} — Fin {fin[0]}.",
+                    "Corregir la fecha de fin o justificar el periodo.",
+                )
+            )
+    elif not inicio and not fin:
+        if not RE_FECHA.search(texto):
+            return [_no_evaluable(regla, "el documento no contiene fechas")]
+
+    if RE_FECHA_ISO.search(texto) and RE_FECHA.search(texto):
+        hallazgos.append(
+            _hallazgo(
+                regla, 1, "Media",
+                "Conviven dos formatos de fecha en el mismo documento.",
+                "Se detectan DD/MM/AAAA y AAAA-MM-DD.",
+                "Homogeneizar todas las fechas a DD/MM/AAAA.",
+            )
+        )
+    return hallazgos
+
+
+def _regla_importes(regla, campos, paginas, texto) -> list[Hallazgo]:
+    hallazgos = []
+    base = _campo(campos, "base imponible", "base")
+    impuesto = _campo(campos, "iva", "igic", "impuesto")
+    total = _campo(campos, "total")
+
+    if base and impuesto and total:
+        n_base, n_imp, n_total = (_a_numero(c[0]) for c in (base, impuesto, total))
+        if None not in (n_base, n_imp, n_total):
+            esperado = round(n_base + n_imp, 2)
+            if abs(esperado - n_total) > 0.01:
+                hallazgos.append(
+                    _hallazgo(
+                        regla, total[1], "Crítica",
+                        "El total no cuadra con la suma de base imponible e impuestos.",
+                        f"{base[0]} + {impuesto[0]} = {_formato_es(esperado)} EUR, "
+                        f"pero el documento declara {total[0]}.",
+                        f"Corregir el total: debería ser {_formato_es(esperado)} EUR.",
+                    )
+                )
+    else:
+        return [_no_evaluable(regla, "no se localizan base imponible, impuesto y total")]
+
+    if RE_IMPORTE_ANGLOSAJON.search(texto):
+        hallazgos.append(
+            _hallazgo(
+                regla, 1, "Baja",
+                "Uso inconsistente del separador decimal.",
+                f"Se detecta el formato anglosajón «{RE_IMPORTE_ANGLOSAJON.search(texto).group(0)}».",
+                "Unificar al formato español: 1.234,56.",
+            )
+        )
+    return hallazgos
+
+
+def _regla_estructura(regla, campos, paginas, texto) -> list[Hallazgo]:
+    hallazgos = []
+
+    vistos: set[str] = set()
+    for coincidencia in RE_PLACEHOLDER.finditer(texto):
+        marcador = coincidencia.group(0)
+        if marcador.lower() in vistos:
+            continue
+        vistos.add(marcador.lower())
+        pagina = next(
+            (i for i, p in enumerate(paginas, start=1) if marcador in p), 1
+        )
+        etiqueta = next(
+            (k for k, (v, _) in campos.items() if marcador in v), None
+        )
+        hallazgos.append(
+            _hallazgo(
+                regla, pagina, "Alta",
+                "Campo obligatorio sin rellenar.",
+                f"Marcador «{marcador}»" + (f" en el campo «{etiqueta}»." if etiqueta else "."),
+                "Completar el campo antes de dar el documento por válido.",
+            )
+        )
+
+    # Continuidad de la paginación (solo si el documento la declara).
+    numeros = [
+        int(m.group(1))
+        for pagina in paginas
+        for m in [RE_PAGINA.search(pagina)]
+        if m
+    ]
+    if len(numeros) >= 2 and numeros != list(range(numeros[0], numeros[0] + len(numeros))):
+        hallazgos.append(
+            _hallazgo(
+                regla, 1, "Media",
+                "La numeración de páginas no es continua.",
+                f"Secuencia detectada: {numeros}.",
+                "Regenerar el documento con paginación correlativa.",
+            )
+        )
+    return hallazgos
+
+
+def _regla_identificadores(regla, campos, paginas, texto) -> list[Hallazgo]:
+    hallazgos = []
+    identificadores = (
+        _lineas_con_etiqueta(paginas, "CIF")
+        + _lineas_con_etiqueta(paginas, "NIF")
+        + _lineas_con_etiqueta(paginas, "NIF/CIF")
+    )
+    ibans = _lineas_con_etiqueta(paginas, "IBAN")
+
+    if not identificadores and not ibans:
+        return [_no_evaluable(regla, "no se localizan identificadores fiscales ni bancarios")]
+
+    for valor, pagina in identificadores:
+        limpio = valor.strip().replace(" ", "")
+        # El vacío se evalúa sobre el valor original: «(no consta)» pierde su
+        # espacio al normalizar y dejaría de reconocerse.
+        if _es_vacio(valor) or _es_vacio(limpio):
+            hallazgos.append(
+                _hallazgo(
+                    regla, pagina, "Crítica",
+                    "Identificador fiscal ausente.",
+                    f"Se lee «{valor or '(en blanco)'}» en lugar de un NIF/CIF.",
+                    "Completar el identificador fiscal de la entidad.",
+                )
+            )
+        elif not (RE_CIF.match(limpio) or RE_NIF.match(limpio)):
+            hallazgos.append(
+                _hallazgo(
+                    regla, pagina, "Alta",
+                    "El identificador fiscal no tiene un formato válido.",
+                    f"Valor encontrado: «{valor}».",
+                    "Verificar el NIF/CIF contra el censo y corregirlo.",
                 )
             )
 
-    # Reglas sin incidencias -> se registran explícitamente como conformes.
-    reglas_con_fallo = {h.regla for h in hallazgos}
+    for valor, pagina in ibans:
+        limpio = valor.strip().replace(" ", "").upper()
+        if _es_vacio(limpio):
+            hallazgos.append(
+                _hallazgo(
+                    regla, pagina, "Alta", "IBAN ausente.",
+                    "El campo IBAN está vacío.",
+                    "Solicitar el certificado de titularidad bancaria.",
+                )
+            )
+        elif limpio.startswith("ES") and len(limpio) != 24:
+            hallazgos.append(
+                _hallazgo(
+                    regla, pagina, "Alta",
+                    "El IBAN no tiene la longitud correcta para España.",
+                    f"«{valor}» tiene {len(limpio)} caracteres; un IBAN español tiene 24.",
+                    "Corregir el IBAN: faltan o sobran dígitos.",
+                )
+            )
+    return hallazgos
+
+
+def _regla_proteccion_datos(regla, campos, paginas, texto) -> list[Hallazgo]:
+    normalizado = texto.upper()
+    derogada = "15/1999" in normalizado or "LOPD 15" in normalizado
+    vigente = "RGPD" in normalizado or "LOPDGDD" in normalizado or "3/2018" in normalizado
+
+    if derogada:
+        return [
+            _hallazgo(
+                regla, 1, "Alta",
+                "La cláusula de protección de datos cita normativa derogada.",
+                "Se menciona la LOPD 15/1999, sustituida en 2018.",
+                "Actualizar la referencia al RGPD (UE) 2016/679 y la LOPDGDD 3/2018.",
+            )
+        ]
+    if not vigente:
+        return [
+            _hallazgo(
+                regla, 1, "Alta",
+                "Falta la cláusula informativa de protección de datos.",
+                "No se localiza mención al RGPD ni a la LOPDGDD.",
+                "Incorporar la cláusula informativa al pie del documento.",
+            )
+        ]
+    return []
+
+
+VALIDADORES = {
+    "R01": _regla_firmas,
+    "R02": _regla_fechas,
+    "R03": _regla_importes,
+    "R04": _regla_estructura,
+    "R05": _regla_identificadores,
+    "R06": _regla_proteccion_datos,
+}
+
+
+def auditar_por_reglas(
+    datos: bytes,
+    nombre: str,
+    paginas_texto: list[str],
+    metadatos: dict[str, Any],
+    reglas: list[Regla],
+) -> ResultadoAuditoria:
+    """Audita el documento aplicando las validaciones deterministas.
+
+    No hay aleatoriedad ni plantillas: dos ejecuciones sobre el mismo PDF dan
+    exactamente el mismo informe, y cada hallazgo cita el texto que lo motiva.
+    """
+    texto = "\n".join(paginas_texto)
+    campos = extraer_campos(paginas_texto)
+
+    hallazgos: list[Hallazgo] = []
+    if not texto.strip():
+        # PDF escaneado sin capa de texto: decirlo, no fabricar hallazgos.
+        for regla in reglas:
+            hallazgos.append(
+                _no_evaluable(regla, "el PDF no contiene texto extraíble (¿escaneado?)")
+            )
+    else:
+        for regla in reglas:
+            validador = VALIDADORES.get(regla.id)
+            if validador is None:
+                continue
+            hallazgos.extend(validador(regla, campos, paginas_texto, texto))
+
+    # Las reglas que no han producido ningún hallazgo se registran como conformes.
+    reglas_con_hallazgo = {h.regla for h in hallazgos}
     for regla in reglas:
-        if regla.nombre not in reglas_con_fallo:
+        if regla.nombre not in reglas_con_hallazgo:
             hallazgos.append(
                 Hallazgo(
                     regla=regla.nombre,
                     pagina=0,
                     severidad="Informativa",
                     estado="Cumple",
-                    descripcion=f"Sin incidencias detectadas para «{regla.nombre}».",
-                    evidencia="Validación superada en todas las páginas revisadas.",
+                    descripcion=f"Sin incidencias: «{regla.nombre}» se valida correctamente.",
+                    evidencia="Todas las comprobaciones de la regla se han superado.",
                     sugerencia="",
                 )
             )
 
     hallazgos.sort(key=lambda h: (SEVERIDADES.index(h.severidad), h.pagina))
     cumplimiento = calcular_cumplimiento(hallazgos)
-    criticos = sum(1 for h in hallazgos if h.severidad == "Crítica")
 
-    resumen = (
-        f"Se han revisado {paginas} página(s) contra {len(reglas)} regla(s) de negocio. "
-        f"El documento alcanza un {cumplimiento} % de cumplimiento con "
-        f"{len([h for h in hallazgos if h.estado != 'Cumple'])} incidencia(s) abierta(s), "
-        f"de las cuales {criticos} son de severidad crítica. "
-        + (
+    incumplimientos = [h for h in hallazgos if h.estado == "No cumple"]
+    revisables = [h for h in hallazgos if h.estado == "Requiere revisión"]
+    criticos = sum(1 for h in incumplimientos if h.severidad == "Crítica")
+
+    partes = [
+        f"Se han revisado {len(paginas_texto)} página(s) contra "
+        f"{len(reglas)} regla(s) de negocio."
+    ]
+    if incumplimientos:
+        partes.append(
+            f"El documento alcanza un {cumplimiento} % de cumplimiento con "
+            f"{len(incumplimientos)} incumplimiento(s), "
+            f"{criticos} de ellos críticos."
+        )
+        partes.append(
             "Se recomienda subsanar las incidencias críticas antes de dar el "
             "documento por válido."
             if criticos
-            else "No se detectan bloqueantes: el documento puede continuar el flujo."
+            else "No hay bloqueantes críticos, pero conviene corregir lo detectado."
         )
-    )
+    else:
+        partes.append(
+            f"El documento supera todas las validaciones aplicadas "
+            f"({cumplimiento} % de cumplimiento)."
+        )
+    if revisables:
+        partes.append(
+            f"{len(revisables)} regla(s) no son evaluables automáticamente y "
+            "requieren revisión manual o el motor de IA."
+        )
 
     return ResultadoAuditoria(
         documento=nombre,
-        motor="Simulación determinista",
+        motor="Reglas deterministas (sin IA)",
         modelo=None,
         fecha_utc=datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        paginas=paginas,
+        paginas=len(paginas_texto),
         tamano_kb=round(len(datos) / 1024, 1),
         reglas_aplicadas=[r.nombre for r in reglas],
         cumplimiento=cumplimiento,
-        resumen=resumen,
+        resumen=" ".join(partes),
         hallazgos=hallazgos,
         metadatos=metadatos,
     )
@@ -609,8 +890,7 @@ def construir_prompt_usuario(reglas: list[Regla], texto: str, adjunto: bool) -> 
 def auditar_con_ia(
     datos: bytes,
     nombre: str,
-    paginas: int,
-    texto: str,
+    paginas_texto: list[str],
     metadatos: dict[str, Any],
     reglas: list[Regla],
     api_key: str,
@@ -626,6 +906,8 @@ def auditar_con_ia(
             "El paquete 'anthropic' no está instalado. Ejecuta: pip install anthropic"
         )
 
+    paginas = len(paginas_texto)
+    texto = "\n".join(paginas_texto)
     cliente = anthropic.Anthropic(api_key=api_key)
 
     # ¿Cabe el PDF nativo? Da mucha mejor precisión en firmas y maquetación.
@@ -924,25 +1206,45 @@ def render_sidebar() -> dict[str, Any]:
         # Documento de ejemplo: permite probar la demo sin traer un fichero
         # propio. Incluye errores deliberados para que la auditoría tenga algo
         # real que detectar.
-        usar_ejemplo = False
-        if os.path.exists(PDF_EJEMPLO):
-            usar_ejemplo = st.checkbox(
-                "📄 Usar documento de ejemplo",
-                value=False,
+        disponibles = {
+            k: v for k, v in EJEMPLOS.items() if os.path.exists(v["fichero"])
+        }
+        ejemplo = None
+        if disponibles:
+            ejemplo = st.selectbox(
+                "…o usa un documento de ejemplo",
+                options=[None, *disponibles.keys()],
+                format_func=lambda x: "— ninguno —" if x is None else x,
                 disabled=fichero is not None,
-                help="Contrato de prueba con errores deliberados de importes, "
-                "fechas, firmas y estructura.",
+                help="Facturas de una página, pensadas para revisarlas a "
+                "simple vista y contrastar el informe.",
             )
-            if fichero is not None and usar_ejemplo:
-                usar_ejemplo = False
+            if fichero is not None:
+                ejemplo = None
+
+            if ejemplo:
+                info = disponibles[ejemplo]
+                st.caption(info["descripcion"])
+                with open(info["fichero"], "rb") as fh:
+                    st.download_button(
+                        "⬇️ Descargar este PDF para revisarlo",
+                        data=fh.read(),
+                        file_name=os.path.basename(info["fichero"]),
+                        mime="application/pdf",
+                        width="stretch",
+                    )
+                if info["errores"]:
+                    with st.expander(f"Ver los {len(info['errores'])} errores que contiene"):
+                        for i, err in enumerate(info["errores"], start=1):
+                            st.markdown(f"{i}. {err}")
 
         st.subheader("3. Motor de análisis")
         motor = st.radio(
             "Modo de ejecución",
-            options=["Simulación (demo)", "IA real (API Anthropic)"],
+            options=["Reglas deterministas", "IA real (API Anthropic)"],
             captions=[
-                "Resultados deterministas, sin coste ni clave.",
-                f"Análisis real del documento con {MODELO_IA}.",
+                "Valida el texto del PDF. Sin clave ni coste.",
+                f"Análisis con {MODELO_IA}. Requiere clave propia.",
             ],
             index=0,
         )
@@ -961,7 +1263,7 @@ def render_sidebar() -> dict[str, Any]:
                     help="No se guarda: vive solo en la sesión del navegador.",
                 )
 
-        hay_documento = fichero is not None or usar_ejemplo
+        hay_documento = fichero is not None or ejemplo is not None
 
         st.divider()
         lanzar = st.button(
@@ -971,7 +1273,7 @@ def render_sidebar() -> dict[str, Any]:
             disabled=not hay_documento or not nombres,
         )
         if not hay_documento:
-            st.caption("Sube un PDF o marca el documento de ejemplo.")
+            st.caption("Sube un PDF o elige un documento de ejemplo.")
         elif not nombres:
             st.caption("Selecciona al menos una regla del checklist.")
 
@@ -981,7 +1283,7 @@ def render_sidebar() -> dict[str, Any]:
     return {
         "reglas": [REGLAS_POR_NOMBRE[n] for n in nombres],
         "fichero": fichero,
-        "usar_ejemplo": usar_ejemplo,
+        "ejemplo": ejemplo,
         "motor": motor,
         "api_key": api_key,
         "lanzar": lanzar,
@@ -993,9 +1295,13 @@ def obtener_documento(config: dict[str, Any]) -> tuple[str, bytes] | None:
     fichero = config["fichero"]
     if fichero is not None:
         return fichero.name, fichero.getvalue()
-    if config.get("usar_ejemplo") and os.path.exists(PDF_EJEMPLO):
-        with open(PDF_EJEMPLO, "rb") as fh:
-            return "contrato_demo.pdf", fh.read()
+
+    clave = config.get("ejemplo")
+    if clave and clave in EJEMPLOS:
+        ruta = EJEMPLOS[clave]["fichero"]
+        if os.path.exists(ruta):
+            with open(ruta, "rb") as fh:
+                return os.path.basename(ruta), fh.read()
     return None
 
 
@@ -1006,7 +1312,7 @@ def obtener_documento(config: dict[str, Any]) -> tuple[str, bytes] | None:
 
 def render_metricas(res: ResultadoAuditoria) -> None:
     """Fila de KPIs del cuadro de mando."""
-    abiertas = [h for h in res.hallazgos if h.estado != "Cumple"]
+    abiertas = [h for h in res.hallazgos if h.estado == "No cumple"]
     criticas = [h for h in abiertas if h.severidad in ("Crítica", "Alta")]
 
     c1, c2, c3, c4 = st.columns(4)
@@ -1198,7 +1504,7 @@ def ejecutar_auditoria(config: dict[str, Any]) -> None:
     with st.status("Procesando documento…", expanded=True) as estado:
         st.write("📖 Extrayendo texto, páginas y metadatos…")
         try:
-            paginas, texto, metadatos = leer_pdf(datos)
+            paginas_texto, metadatos = leer_pdf(datos)
         except Exception as exc:
             estado.update(label="Error al leer el PDF", state="error")
             st.error(f"No se ha podido leer el documento: {exc}")
@@ -1210,7 +1516,10 @@ def ejecutar_auditoria(config: dict[str, Any]) -> None:
                 "limitada. Instala uno de los dos para un análisis completo."
             )
 
-        st.write(f"🔎 Aplicando {len(config['reglas'])} regla(s) sobre {paginas} página(s)…")
+        st.write(
+            f"🔎 Aplicando {len(config['reglas'])} regla(s) sobre "
+            f"{len(paginas_texto)} página(s)…"
+        )
         try:
             if config["motor"].startswith("IA real"):
                 if not config["api_key"]:
@@ -1222,12 +1531,12 @@ def ejecutar_auditoria(config: dict[str, Any]) -> None:
                     return
                 st.write(f"🤖 Consultando al modelo {MODELO_IA}…")
                 resultado = auditar_con_ia(
-                    datos, nombre_documento, paginas, texto, metadatos,
+                    datos, nombre_documento, paginas_texto, metadatos,
                     config["reglas"], config["api_key"],
                 )
             else:
-                resultado = auditar_simulado(
-                    datos, nombre_documento, paginas, texto, metadatos, config["reglas"]
+                resultado = auditar_por_reglas(
+                    datos, nombre_documento, paginas_texto, metadatos, config["reglas"]
                 )
         except Exception as exc:
             estado.update(label="Error durante el análisis", state="error")
@@ -1263,10 +1572,10 @@ def main() -> None:
     if resultado is None or datos_pdf is None:
         # Estado inicial: explica la propuesta de valor antes del primer análisis.
         st.info(
-            "👈 Sube un PDF —o marca **Usar documento de ejemplo**—, elige el "
-            "checklist de reglas y pulsa **Ejecutar auditoría** para generar "
-            "el cuadro de mando. No hace falta clave de API: el modo "
-            "*Simulación* funciona sin coste."
+            "👈 **Para probarlo:** elige uno de los dos documentos de ejemplo en "
+            "la barra lateral, descárgalo para verlo con tus propios ojos y pulsa "
+            "**Ejecutar auditoría**. Podrás contrastar cada hallazgo del informe "
+            "con el papel. No hace falta clave de API."
         )
         c1, c2, c3 = st.columns(3)
         c1.markdown(

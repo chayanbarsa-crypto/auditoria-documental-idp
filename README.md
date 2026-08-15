@@ -16,17 +16,23 @@ estructurado y el documento con la auditoría anexada.
 | Fase | Detalle |
 |---|---|
 | **Ingesta** | Lectura del PDF en memoria (PyMuPDF / pypdf): páginas, texto y metadatos. Sin persistencia en disco. |
-| **Validación** | 6 reglas de negocio configurables: firmas, fechas, importes, estructura, identificadores fiscales y protección de datos. |
+| **Validación** | 6 reglas de negocio configurables: firmas, fechas, importes, estructura, identificadores fiscales y protección de datos. Cada incidencia se ancla a su página y cita la evidencia. |
 | **Salida** | KPIs de cumplimiento, tabla de incidencias con severidad y evidencia, JSON para integrar en ERP/CRM y PDF corregido. |
 
 ### Dos motores de análisis
 
-- **Simulación (por defecto).** No requiere clave ni tiene coste. Es
-  **determinista**: se siembra con el SHA-256 del fichero, así que el mismo PDF
-  produce siempre el mismo informe. Pensado para demostrar el flujo completo.
-- **IA real.** Análisis con la API de Anthropic (`claude-opus-5`). Adjunta el PDF
-  nativo cuando cabe en los límites de la API, de modo que el modelo *ve* firmas
-  y maquetación, y usa salida estructurada con JSON Schema estricto.
+- **Reglas deterministas (por defecto).** No requiere clave ni tiene coste.
+  Analiza el texto realmente extraído del PDF: cuadre aritmético de los
+  importes, orden cronológico de las fechas, formato de NIF/CIF e IBAN,
+  marcadores sin rellenar, continuidad de la paginación, firmas en blanco y
+  vigencia de la cláusula de protección de datos. **Cada hallazgo cita la
+  evidencia encontrada**, así que el informe se puede contrastar con el
+  documento. Si una regla no encuentra los campos que necesita, lo declara *no
+  evaluable* en lugar de inventar un hallazgo.
+- **IA real.** Análisis con la API de Anthropic (`claude-opus-5`) para
+  documentos de estructura libre. Adjunta el PDF nativo cuando cabe en los
+  límites de la API, de modo que el modelo *ve* firmas y maquetación, y usa
+  salida estructurada con JSON Schema estricto.
 
 > El modo IA requiere que **cada visitante aporte su propia clave**. La demo
 > desplegada no incluye ninguna clave: nadie puede consumir crédito ajeno.
@@ -50,12 +56,27 @@ set ANTHROPIC_API_KEY=sk-ant-...   # Windows
 export ANTHROPIC_API_KEY=sk-ant-... # Linux / macOS
 ```
 
-### Documento de ejemplo
+### Documentos de ejemplo — pruébalo y compruébalo
 
-`ejemplo/contrato_demo.pdf` es un contrato con errores deliberados (importes que
-no cuadran, fecha de fin anterior a la de inicio, campo sin rellenar, firma
-ausente, IBAN corto, salto de paginación). Se puede cargar desde la barra
-lateral sin subir nada. Para regenerarlo: `python generar_ejemplo.py`.
+En la barra lateral hay dos facturas de **una sola página**, descargables, para
+que cualquiera pueda revisarlas a simple vista y contrastar el informe:
+
+| Documento | Qué debe salir |
+|---|---|
+| `ejemplo/ejemplo_conforme.pdf` | **0 incumplimientos**, 100 % de cumplimiento |
+| `ejemplo/ejemplo_con_errores.pdf` | **7 incumplimientos**, uno por cada defecto |
+
+Los 7 defectos deliberados del segundo documento:
+
+1. **Importes** — TOTAL 1.310,00 € cuando 1.000,00 + 210,00 = 1.210,00 €
+2. **Fechas** — fin (15/02/2026) anterior al inicio (01/03/2026)
+3. **Estructura** — Nº de factura sin rellenar: `[PENDIENTE]`
+4. **Identificadores** — CIF del emisor: `(no consta)`
+5. **Identificadores** — IBAN de 23 caracteres (los españoles tienen 24)
+6. **Firmas** — la firma del receptor está en blanco
+7. **Protección de datos** — cita la LOPD 15/1999, derogada en 2018
+
+Para regenerar ambos PDFs: `python generar_ejemplos.py`.
 
 ---
 
@@ -92,11 +113,12 @@ URL resultante: `https://huggingface.co/spaces/<usuario>/<space>`.
 ## Estructura
 
 ```
-app.py                     Aplicación completa
-generar_ejemplo.py         Genera el PDF de demostración
-requirements.txt           Dependencias
-ejemplo/contrato_demo.pdf  Documento de prueba
-.streamlit/config.toml     Tema y límite de subida
+app.py                            Aplicación completa
+generar_ejemplos.py               Genera los dos PDFs de demostración
+requirements.txt                  Dependencias
+ejemplo/ejemplo_conforme.pdf      Factura correcta
+ejemplo/ejemplo_con_errores.pdf   Factura con 7 defectos deliberados
+.streamlit/config.toml            Tema y límite de subida
 ```
 
 ---
