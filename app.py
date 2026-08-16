@@ -1293,8 +1293,16 @@ def _enviar_aviso(lead: dict[str, str]) -> bool:
         destinatario = configuracion.get("destinatario", remitente)
         servidor = configuracion.get("servidor", "smtp.gmail.com")
         puerto = int(configuracion.get("puerto", 465))
-    except Exception:
-        return False  # sin secrets configurados: se usará el CSV
+    except Exception as exc:
+        # Sin esta traza el fallo es invisible: la app funciona, el visitante
+        # entra, y los leads se acumulan en un CSV que el contenedor borra.
+        print(
+            "[registro] AVISO POR CORREO NO CONFIGURADO "
+            f"({type(exc).__name__}: {exc}). "
+            "El lead solo se guarda en el CSV local, que en Streamlit Cloud "
+            "es efímero. Configura la sección [email] en Settings -> Secrets."
+        )
+        return False
 
     mensaje = EmailMessage()
     mensaje["Subject"] = (
