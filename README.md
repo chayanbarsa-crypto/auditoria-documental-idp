@@ -89,9 +89,21 @@ Para regenerar ambos PDFs: `python generar_ejemplos.py`.
 ## Registro de visitas (lead capture)
 
 La demo está **cerrada tras un formulario**: sin identificarse no se accede a
-la herramienta. Cada acceso se registra en una hoja de cálculo de Google con
-fecha, nombre, empresa, email, cargo, motivo de la visita, consentimiento y
-origen (`?origen=linkedin`, `?origen=cv`… para medir por dónde llegan).
+la herramienta. Si faltan campos obligatorios salta un banner que impide el
+paso y enumera lo que falta.
+
+Columnas que llegan a la hoja de cálculo:
+
+| Columna | Origen |
+|---|---|
+| `fecha`, `hora` | **Sello del servidor** en hora peninsular. No se pide ni se muestra al visitante. |
+| `nombre`, `empresa`, `sector`, `email` | Obligatorios en el formulario |
+| `cargo`, `interes` | Opcionales |
+| `consentimiento_comercial` | Marca de aceptación expresa |
+| `origen` | `?origen=linkedin`, `?origen=cv`… para medir por dónde llegan |
+
+El **sector** es un desplegable cerrado de 15 opciones, no texto libre: así se
+puede agrupar y contar sin limpiar los datos después.
 
 ### Antes de publicar
 

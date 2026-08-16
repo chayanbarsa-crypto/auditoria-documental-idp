@@ -20,3 +20,5 @@ python-dotenv>=1.0
 # Registro de visitas en Google Sheets
 gspread>=6.0
 google-auth>=2.30
+# Zona horaria Europe/Madrid (Windows no trae base de datos de husos)
+tzdata>=2024.1

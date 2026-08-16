@@ -94,6 +94,13 @@ try:  # Registro de visitas en una hoja de cálculo de Google.
 except ImportError:  # pragma: no cover
     HAS_GSPREAD = False
 
+try:  # Hora peninsular: el contenedor de despliegue corre en UTC.
+    from zoneinfo import ZoneInfo
+
+    ZONA_HORARIA = ZoneInfo("Europe/Madrid")
+except Exception:  # pragma: no cover - falta el paquete tzdata
+    ZONA_HORARIA = timezone.utc
+
 try:  # Carga ANTHROPIC_API_KEY desde .env si existe.
     from dotenv import load_dotenv
 
@@ -1209,15 +1216,37 @@ def nombre_base(nombre_fichero: str) -> str:
 # de Google; el CSV local es un respaldo que únicamente sirve ejecutando en
 # local, porque en Streamlit Cloud el disco del contenedor es efímero.
 
+# La fecha y la hora no se piden: se sellan en el servidor al conceder el
+# acceso. Solo se ven en la hoja de cálculo, nunca en la interfaz.
 COLUMNAS_LEAD = [
-    "fecha_utc",
+    "fecha",
+    "hora",
     "nombre",
     "empresa",
+    "sector",
     "email",
     "cargo",
     "interes",
     "consentimiento_comercial",
     "origen",
+]
+
+SECTORES = [
+    "Asesoría / Gestoría",
+    "Banca y seguros",
+    "Construcción e inmobiliaria",
+    "Consultoría",
+    "Educación",
+    "Energía y utilities",
+    "Industria y fabricación",
+    "Legal / Despacho de abogados",
+    "Logística y transporte",
+    "Retail y distribución",
+    "Sanidad y farmacéutica",
+    "Sector público",
+    "Tecnología / Software",
+    "Turismo y hostelería",
+    "Otro",
 ]
 
 INTERESES = [
@@ -1310,20 +1339,50 @@ def acceso_concedido() -> bool:
     return bool(st.session_state.get("acceso_concedido"))
 
 
-def _validar(nombre: str, empresa: str, email: str, consiente: bool) -> list[str]:
+def _validar(
+    nombre: str, empresa: str, sector: str | None, email: str, consiente: bool
+) -> list[str]:
     """Lista de errores del formulario; vacía si todo es correcto."""
     errores = []
     if len(nombre.strip()) < 3:
-        errores.append("Indica tu nombre y apellidos.")
+        errores.append("**Nombre y apellidos** — indica tu nombre completo.")
     if len(empresa.strip()) < 2:
-        errores.append("Indica la empresa u organización.")
+        errores.append("**Empresa u organización** — este campo es obligatorio.")
+    if not sector:
+        errores.append("**Sector** — selecciona uno de la lista.")
     if not RE_EMAIL.match(email.strip()):
-        errores.append("El correo electrónico no tiene un formato válido.")
+        errores.append("**Correo electrónico** — el formato no es válido.")
     if not consiente:
         errores.append(
-            "Para continuar debes aceptar el tratamiento de tus datos."
+            "**Protección de datos** — debes aceptar el tratamiento para continuar."
         )
     return errores
+
+
+def render_banner_faltan_datos(errores: list[str]) -> None:
+    """Banner destacado cuando el formulario está incompleto."""
+    st.markdown(
+        f"""
+<div style="
+    background: #7f1d1d;
+    border-left: 6px solid #f87171;
+    color: #fee2e2;
+    padding: 16px 20px;
+    border-radius: 10px;
+    margin-bottom: 8px;
+">
+  <div style="font-size:1.05rem; font-weight:700; margin-bottom:4px;">
+    🚫 No se puede acceder: faltan datos obligatorios
+  </div>
+  <div style="font-size:0.94rem; opacity:0.95;">
+    Completa {len(errores)} campo(s) para desbloquear la demostración.
+  </div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+    for error in errores:
+        st.error(error)
 
 
 def render_clausula_privacidad() -> None:
@@ -1390,13 +1449,21 @@ def render_puerta() -> None:
 
     with st.form("registro_acceso", clear_on_submit=False):
         st.markdown("#### Datos de acceso")
+        st.caption("Los campos marcados con * son obligatorios.")
         col_a, col_b = st.columns(2)
         nombre = col_a.text_input("Nombre y apellidos *", max_chars=120)
         empresa = col_b.text_input("Empresa u organización *", max_chars=120)
         col_c, col_d = st.columns(2)
-        email = col_c.text_input("Correo electrónico *", max_chars=160)
-        cargo = col_d.text_input("Cargo (opcional)", max_chars=120)
-        interes = st.selectbox("¿Qué te trae por aquí?", options=INTERESES)
+        sector = col_c.selectbox(
+            "Sector *",
+            options=SECTORES,
+            index=None,
+            placeholder="Selecciona el sector…",
+        )
+        email = col_d.text_input("Correo electrónico *", max_chars=160)
+        col_e, col_f = st.columns(2)
+        cargo = col_e.text_input("Cargo (opcional)", max_chars=120)
+        interes = col_f.selectbox("¿Qué te trae por aquí?", options=INTERESES)
 
         with st.expander("Información sobre protección de datos (léelo antes de aceptar)"):
             render_clausula_privacidad()
@@ -1414,16 +1481,20 @@ def render_puerta() -> None:
     if not enviado:
         return
 
-    errores = _validar(nombre, empresa, email, consiente)
+    errores = _validar(nombre, empresa, sector, email, consiente)
     if errores:
-        for error in errores:
-            st.error(error)
+        render_banner_faltan_datos(errores)
         return
 
+    # Marca temporal del servidor en hora peninsular: el visitante no la
+    # introduce ni la ve, solo aparece en la hoja de cálculo.
+    ahora = datetime.now(ZONA_HORARIA)
     lead = {
-        "fecha_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "fecha": ahora.strftime("%d/%m/%Y"),
+        "hora": ahora.strftime("%H:%M:%S"),
         "nombre": nombre.strip(),
         "empresa": empresa.strip(),
+        "sector": sector,
         "email": email.strip().lower(),
         "cargo": cargo.strip(),
         "interes": interes,
