@@ -86,6 +86,41 @@ Para regenerar ambos PDFs: `python generar_ejemplos.py`.
 
 ---
 
+## Registro de visitas (lead capture)
+
+La demo está **cerrada tras un formulario**: sin identificarse no se accede a
+la herramienta. Cada acceso se registra en una hoja de cálculo de Google con
+fecha, nombre, empresa, email, cargo, motivo de la visita, consentimiento y
+origen (`?origen=linkedin`, `?origen=cv`… para medir por dónde llegan).
+
+### Antes de publicar
+
+1. **Completa `RESPONSABLE_TRATAMIENTO` en `app.py`.** El art. 13 del RGPD
+   obliga a identificar al responsable; mientras contenga el marcador, la app
+   muestra un aviso en el propio formulario.
+2. Revisa `EMAIL_CONTACTO_RGPD` y `CONSERVACION_DATOS`.
+
+### Configurar Google Sheets
+
+1. En <https://console.cloud.google.com> crea un proyecto.
+2. *APIs y servicios* → habilita **Google Sheets API**.
+3. *Credenciales* → *Crear credenciales* → **Cuenta de servicio**.
+4. En la cuenta creada: *Claves* → *Añadir clave* → **JSON** (se descarga).
+5. Crea la hoja de cálculo y **compártela con el `client_email`** de la cuenta
+   de servicio, con permiso de **Editor**. Sin este paso, la escritura falla.
+6. Copia el contenido de `.streamlit/secrets.toml.example`, rellénalo con los
+   valores del JSON y pégalo en Streamlit Cloud → *Manage app* → *Settings* →
+   *Secrets*. **Nunca subas ese fichero al repositorio.**
+
+Sin credenciales configuradas la app no se rompe: guarda los leads en
+`leads_local.csv`, que sirve ejecutando en local. **En Streamlit Cloud ese
+fichero se pierde en cada redespliegue**, así que la hoja de cálculo no es
+opcional si quieres conservar los registros.
+
+Para saltarte la puerta mientras desarrollas: `DEMO_SIN_REGISTRO=1`.
+
+---
+
 ## Despliegue en Streamlit Community Cloud (gratuito)
 
 1. Sube **el contenido de esta carpeta** a un repositorio público de GitHub.

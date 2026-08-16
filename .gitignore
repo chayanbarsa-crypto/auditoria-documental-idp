@@ -2,4 +2,10 @@
 __pycache__/
 *.pyc
 .env
+
+# Credenciales de la cuenta de servicio de Google. NUNCA deben subirse.
 .streamlit/secrets.toml
+*-service-account*.json
+
+# Datos personales de los visitantes: fuera del repositorio.
+leads_local.csv

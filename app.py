@@ -24,6 +24,7 @@ Autor: Jordy — Demo comercial. Contacto: 603 460 945
 from __future__ import annotations
 
 import base64
+import csv
 import io
 import json
 import os
@@ -85,6 +86,14 @@ try:
 except ImportError:  # pragma: no cover
     HAS_ANTHROPIC = False
 
+try:  # Registro de visitas en una hoja de cálculo de Google.
+    import gspread
+    from google.oauth2.service_account import Credentials
+
+    HAS_GSPREAD = True
+except ImportError:  # pragma: no cover
+    HAS_GSPREAD = False
+
 try:  # Carga ANTHROPIC_API_KEY desde .env si existe.
     from dotenv import load_dotenv
 
@@ -96,6 +105,14 @@ except ImportError:  # pragma: no cover
 # ---------------------------------------------------------------------------
 # 2. CONFIGURACIÓN Y CATÁLOGO DE REGLAS DE NEGOCIO
 # ---------------------------------------------------------------------------
+
+# ⚠️ COMPLETA ESTO ANTES DE PUBLICAR ⚠️
+# El art. 13 del RGPD obliga a identificar al responsable del tratamiento.
+# Mientras `RESPONSABLE_TRATAMIENTO` contenga el marcador, la app avisa en el
+# formulario de que la cláusula está incompleta.
+RESPONSABLE_TRATAMIENTO = "[COMPLETAR: nombre y apellidos o razón social]"
+EMAIL_CONTACTO_RGPD = "chayanbarsa@gmail.com"
+CONSERVACION_DATOS = "2 años desde el último contacto"
 
 APP_TITLE = "📄 Módulo de Auditoría Documental Inteligente (IDP)"
 APP_SUBTITLE = (
@@ -1186,7 +1203,245 @@ def nombre_base(nombre_fichero: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 8. INTERFAZ — BARRA LATERAL
+# 8. REGISTRO DE VISITAS Y CONTROL DE ACCESO
+# ---------------------------------------------------------------------------
+# La demo se abre solo tras identificarse. Los datos van a una hoja de cálculo
+# de Google; el CSV local es un respaldo que únicamente sirve ejecutando en
+# local, porque en Streamlit Cloud el disco del contenedor es efímero.
+
+COLUMNAS_LEAD = [
+    "fecha_utc",
+    "nombre",
+    "empresa",
+    "email",
+    "cargo",
+    "interes",
+    "consentimiento_comercial",
+    "origen",
+]
+
+INTERESES = [
+    "Curiosidad profesional / evaluación técnica",
+    "Proceso de selección (soy reclutador)",
+    "Posible implantación en mi empresa",
+    "Otro",
+]
+
+RUTA_LEADS_CSV = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "leads_local.csv"
+)
+
+RE_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$")
+
+
+@st.cache_resource(show_spinner=False)
+def _hoja_de_leads():
+    """Hoja de cálculo destino, o None si no hay credenciales configuradas.
+
+    Se cachea como recurso: abrir la hoja en cada rerun costaría una llamada
+    de red por pulsación de tecla.
+    """
+    if not HAS_GSPREAD:
+        return None
+    try:
+        credenciales = dict(st.secrets["gcp_service_account"])
+        id_hoja = st.secrets["registro"]["sheet_id"]
+    except Exception:
+        # Sin secrets configurados (ejecución local): se usará el CSV.
+        return None
+
+    try:
+        cuenta = Credentials.from_service_account_info(
+            credenciales,
+            scopes=["https://www.googleapis.com/auth/spreadsheets"],
+        )
+        hoja = gspread.authorize(cuenta).open_by_key(id_hoja).sheet1
+        # Cabecera automática la primera vez.
+        if not hoja.get_all_values():
+            hoja.append_row(COLUMNAS_LEAD, value_input_option="USER_ENTERED")
+        return hoja
+    except Exception as exc:  # credenciales mal pegadas, hoja no compartida...
+        print(f"[registro] no se ha podido abrir la hoja de cálculo: {exc}")
+        return None
+
+
+def registrar_lead(lead: dict[str, str]) -> str:
+    """Persiste el lead y devuelve el destino usado: sheets | csv | log.
+
+    Nunca lanza: si el registro falla, el visitante no debe quedarse fuera por
+    un problema de nuestra infraestructura. El peor caso deja el lead en los
+    logs del servidor, desde donde se puede recuperar a mano.
+    """
+    fila = [lead.get(columna, "") for columna in COLUMNAS_LEAD]
+
+    hoja = _hoja_de_leads()
+    if hoja is not None:
+        try:
+            hoja.append_row(fila, value_input_option="USER_ENTERED")
+            return "sheets"
+        except Exception as exc:
+            print(f"[registro] fallo al escribir en Sheets: {exc}")
+
+    try:
+        nuevo = not os.path.exists(RUTA_LEADS_CSV)
+        with open(RUTA_LEADS_CSV, "a", newline="", encoding="utf-8-sig") as fh:
+            escritor = csv.writer(fh, delimiter=";")
+            if nuevo:
+                escritor.writerow(COLUMNAS_LEAD)
+            escritor.writerow(fila)
+        return "csv"
+    except Exception as exc:
+        print(f"[registro] fallo al escribir el CSV local: {exc}")
+
+    # Último recurso: que quede constancia en el log del servidor.
+    print(f"[registro] LEAD SIN PERSISTIR -> {dict(zip(COLUMNAS_LEAD, fila))}")
+    return "log"
+
+
+def acceso_concedido() -> bool:
+    """True si esta sesión del navegador ya se ha identificado.
+
+    `DEMO_SIN_REGISTRO=1` salta la puerta: es una variable de entorno para
+    desarrollo y pruebas en local. En Streamlit Cloud no está definida, así
+    que la demo publicada siempre pide el registro.
+    """
+    if os.getenv("DEMO_SIN_REGISTRO") == "1":
+        return True
+    return bool(st.session_state.get("acceso_concedido"))
+
+
+def _validar(nombre: str, empresa: str, email: str, consiente: bool) -> list[str]:
+    """Lista de errores del formulario; vacía si todo es correcto."""
+    errores = []
+    if len(nombre.strip()) < 3:
+        errores.append("Indica tu nombre y apellidos.")
+    if len(empresa.strip()) < 2:
+        errores.append("Indica la empresa u organización.")
+    if not RE_EMAIL.match(email.strip()):
+        errores.append("El correo electrónico no tiene un formato válido.")
+    if not consiente:
+        errores.append(
+            "Para continuar debes aceptar el tratamiento de tus datos."
+        )
+    return errores
+
+
+def render_clausula_privacidad() -> None:
+    """Cláusula informativa del art. 13 RGPD."""
+    incompleta = "COMPLETAR" in RESPONSABLE_TRATAMIENTO
+    if incompleta:
+        st.warning(
+            "⚠️ Cláusula incompleta: falta identificar al responsable del "
+            "tratamiento en `RESPONSABLE_TRATAMIENTO` (app.py)."
+        )
+    st.markdown(
+        f"""
+**Responsable:** {RESPONSABLE_TRATAMIENTO}
+
+**Finalidad:** registrar el uso de esta demostración y ponerse en contacto
+contigo si has mostrado interés comercial. No se elaboran perfiles ni se toman
+decisiones automatizadas.
+
+**Legitimación:** tu consentimiento expreso, que puedes retirar en cualquier
+momento.
+
+**Destinatarios:** los datos se almacenan en Google Sheets (Google Ireland
+Ltd.) como encargado del tratamiento. No se ceden a terceros.
+
+**Conservación:** {CONSERVACION_DATOS}.
+
+**Derechos:** puedes acceder, rectificar, suprimir, limitar u oponerte al
+tratamiento y solicitar su portabilidad escribiendo a **{EMAIL_CONTACTO_RGPD}**.
+También puedes reclamar ante la Agencia Española de Protección de Datos
+(www.aepd.es).
+
+**Los documentos que subas a la demo no se almacenan**: se procesan en memoria
+y se descartan al terminar la sesión.
+"""
+    )
+
+
+def render_puerta() -> None:
+    """Formulario de acceso. Sin él no se llega a la aplicación."""
+    st.info(
+        "🔒 **Demostración con acceso registrado.** Identifícate para probar la "
+        "herramienta. Es un formulario de 30 segundos y no se envía ningún "
+        "correo automático."
+    )
+
+    c1, c2, c3 = st.columns(3)
+    c1.markdown(
+        "#### Qué vas a poder hacer\n"
+        "Auditar hasta dos PDFs contra un checklist de reglas de negocio, con "
+        "documentos de ejemplo incluidos."
+    )
+    c2.markdown(
+        "#### Sin coste ni claves\n"
+        "El motor de reglas funciona sin API de pago. Los documentos se "
+        "procesan en memoria y no se almacenan."
+    )
+    c3.markdown(
+        "#### Qué obtienes\n"
+        "Informe de incidencias con evidencia, JSON estructurado, CSV del lote "
+        "y los documentos corregidos."
+    )
+
+    st.divider()
+
+    with st.form("registro_acceso", clear_on_submit=False):
+        st.markdown("#### Datos de acceso")
+        col_a, col_b = st.columns(2)
+        nombre = col_a.text_input("Nombre y apellidos *", max_chars=120)
+        empresa = col_b.text_input("Empresa u organización *", max_chars=120)
+        col_c, col_d = st.columns(2)
+        email = col_c.text_input("Correo electrónico *", max_chars=160)
+        cargo = col_d.text_input("Cargo (opcional)", max_chars=120)
+        interes = st.selectbox("¿Qué te trae por aquí?", options=INTERESES)
+
+        with st.expander("Información sobre protección de datos (léelo antes de aceptar)"):
+            render_clausula_privacidad()
+
+        consiente = st.checkbox(
+            "He leído la información sobre protección de datos y **consiento** "
+            "el tratamiento de mis datos para que se contacte conmigo.",
+            value=False,
+        )
+
+        enviado = st.form_submit_button(
+            "🔓 Acceder a la demostración", type="primary", width="stretch"
+        )
+
+    if not enviado:
+        return
+
+    errores = _validar(nombre, empresa, email, consiente)
+    if errores:
+        for error in errores:
+            st.error(error)
+        return
+
+    lead = {
+        "fecha_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "nombre": nombre.strip(),
+        "empresa": empresa.strip(),
+        "email": email.strip().lower(),
+        "cargo": cargo.strip(),
+        "interes": interes,
+        "consentimiento_comercial": "sí",
+        # Permite medir de dónde llega la visita: ?origen=linkedin, ?origen=cv...
+        "origen": st.query_params.get("origen", "directo"),
+    }
+    destino = registrar_lead(lead)
+    if destino == "log":
+        print("[registro] revisa la configuración: el lead no se ha persistido")
+
+    st.session_state["acceso_concedido"] = True
+    st.session_state["visitante"] = lead
+    st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# 9. INTERFAZ — BARRA LATERAL
 # ---------------------------------------------------------------------------
 
 
@@ -1330,6 +1585,12 @@ def render_sidebar() -> dict[str, Any]:
             st.caption("Selecciona al menos una regla del checklist.")
 
         st.divider()
+        visitante = st.session_state.get("visitante") or {}
+        if visitante:
+            st.caption(
+                f"Sesión de **{visitante.get('nombre', '')}** "
+                f"({visitante.get('empresa', '')})"
+            )
         st.caption("Demo de portfolio · Procesamiento inteligente de documentos")
 
     return {
@@ -1367,7 +1628,7 @@ def obtener_documentos(config: dict[str, Any]) -> list[tuple[str, bytes]]:
 
 
 # ---------------------------------------------------------------------------
-# 9. INTERFAZ — PANEL DE RESULTADOS
+# 10. INTERFAZ — PANEL DE RESULTADOS
 # ---------------------------------------------------------------------------
 
 
@@ -1683,7 +1944,7 @@ def render_banner_comercial() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 10. APLICACIÓN
+# 11. APLICACIÓN
 # ---------------------------------------------------------------------------
 
 
@@ -1785,6 +2046,12 @@ def main() -> None:
 
     st.title(APP_TITLE)
     st.caption(APP_SUBTITLE)
+
+    # Puerta de acceso: sin identificarse no se llega ni a la barra lateral.
+    if not acceso_concedido():
+        render_puerta()
+        render_banner_comercial()
+        return
 
     config = render_sidebar()
 
