@@ -113,12 +113,12 @@ except ImportError:  # pragma: no cover
 # 2. CONFIGURACIÓN Y CATÁLOGO DE REGLAS DE NEGOCIO
 # ---------------------------------------------------------------------------
 
-# ⚠️ COMPLETA ESTO ANTES DE PUBLICAR ⚠️
-# El art. 13 del RGPD obliga a identificar al responsable del tratamiento.
-# Mientras `RESPONSABLE_TRATAMIENTO` contenga el marcador, la app avisa en el
-# formulario de que la cláusula está incompleta.
-RESPONSABLE_TRATAMIENTO = "[COMPLETAR: nombre y apellidos o razón social]"
-EMAIL_CONTACTO_RGPD = "chayanbarsa@gmail.com"
+# Datos del responsable del tratamiento, obligatorios en la cláusula
+# informativa (art. 13 RGPD). Recomendable añadir los apellidos: el precepto
+# habla de "identidad del responsable" y el nombre de pila solo la determina
+# de forma parcial.
+RESPONSABLE_TRATAMIENTO = "Jordy"
+EMAIL_CONTACTO_RGPD = "avc.jordy@gmail.com"
 CONSERVACION_DATOS = "2 años desde el último contacto"
 
 APP_TITLE = "📄 Módulo de Auditoría Documental Inteligente (IDP)"
