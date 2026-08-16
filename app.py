@@ -29,7 +29,9 @@ import io
 import json
 import os
 import re
+import smtplib
 import zipfile
+from email.message import EmailMessage
 from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone
 from typing import Any
@@ -85,14 +87,6 @@ try:
     HAS_ANTHROPIC = True
 except ImportError:  # pragma: no cover
     HAS_ANTHROPIC = False
-
-try:  # Registro de visitas en una hoja de cálculo de Google.
-    import gspread
-    from google.oauth2.service_account import Credentials
-
-    HAS_GSPREAD = True
-except ImportError:  # pragma: no cover
-    HAS_GSPREAD = False
 
 try:  # Hora peninsular: el contenedor de despliegue corre en UTC.
     from zoneinfo import ZoneInfo
@@ -1212,12 +1206,12 @@ def nombre_base(nombre_fichero: str) -> str:
 # ---------------------------------------------------------------------------
 # 8. REGISTRO DE VISITAS Y CONTROL DE ACCESO
 # ---------------------------------------------------------------------------
-# La demo se abre solo tras identificarse. Los datos van a una hoja de cálculo
-# de Google; el CSV local es un respaldo que únicamente sirve ejecutando en
+# La demo se abre solo tras identificarse. Cada visita se avisa por correo al
+# responsable; el CSV local es un respaldo que únicamente sirve ejecutando en
 # local, porque en Streamlit Cloud el disco del contenedor es efímero.
 
 # La fecha y la hora no se piden: se sellan en el servidor al conceder el
-# acceso. Solo se ven en la hoja de cálculo, nunca en la interfaz.
+# acceso. Solo se ven en el aviso por correo, nunca en la interfaz.
 COLUMNAS_LEAD = [
     "fecha",
     "hora",
@@ -1263,39 +1257,68 @@ RUTA_LEADS_CSV = os.path.join(
 RE_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$")
 
 
-@st.cache_resource(show_spinner=False)
-def _hoja_de_leads():
-    """Hoja de cálculo destino, o None si no hay credenciales configuradas.
+def _cuerpo_email(lead: dict[str, str]) -> str:
+    """Texto del aviso, con los campos alineados para leerlo de un vistazo."""
+    etiquetas = {
+        "fecha": "Fecha",
+        "hora": "Hora",
+        "nombre": "Nombre",
+        "empresa": "Empresa",
+        "sector": "Sector",
+        "email": "Email",
+        "cargo": "Cargo",
+        "interes": "Motivo",
+        "origen": "Origen",
+        "consentimiento_comercial": "Consiente contacto",
+    }
+    ancho = max(len(e) for e in etiquetas.values())
+    lineas = [
+        f"{etiqueta.ljust(ancho)} : {lead.get(clave) or '—'}"
+        for clave, etiqueta in etiquetas.items()
+    ]
+    return (
+        "Alguien acaba de entrar en la demo de auditoría documental.\n\n"
+        + "\n".join(lineas)
+        + "\n\nPuedes responder directamente a este correo para contactar "
+        "con la persona.\n"
+    )
 
-    Se cachea como recurso: abrir la hoja en cada rerun costaría una llamada
-    de red por pulsación de tecla.
-    """
-    if not HAS_GSPREAD:
-        return None
+
+def _enviar_aviso(lead: dict[str, str]) -> bool:
+    """Envía el aviso por SMTP. False si no hay configuración o falla el envío."""
     try:
-        credenciales = dict(st.secrets["gcp_service_account"])
-        id_hoja = st.secrets["registro"]["sheet_id"]
+        configuracion = st.secrets["email"]
+        remitente = configuracion["remitente"]
+        contrasena = configuracion["password_app"]
+        destinatario = configuracion.get("destinatario", remitente)
+        servidor = configuracion.get("servidor", "smtp.gmail.com")
+        puerto = int(configuracion.get("puerto", 465))
     except Exception:
-        # Sin secrets configurados (ejecución local): se usará el CSV.
-        return None
+        return False  # sin secrets configurados: se usará el CSV
+
+    mensaje = EmailMessage()
+    mensaje["Subject"] = (
+        f"🔔 Demo IDP — {lead.get('empresa', '?')} ({lead.get('sector', '?')})"
+    )
+    mensaje["From"] = remitente
+    mensaje["To"] = destinatario
+    if lead.get("email"):
+        # Responder al aviso escribe directamente al visitante.
+        mensaje["Reply-To"] = lead["email"]
+    mensaje.set_content(_cuerpo_email(lead))
 
     try:
-        cuenta = Credentials.from_service_account_info(
-            credenciales,
-            scopes=["https://www.googleapis.com/auth/spreadsheets"],
-        )
-        hoja = gspread.authorize(cuenta).open_by_key(id_hoja).sheet1
-        # Cabecera automática la primera vez.
-        if not hoja.get_all_values():
-            hoja.append_row(COLUMNAS_LEAD, value_input_option="USER_ENTERED")
-        return hoja
-    except Exception as exc:  # credenciales mal pegadas, hoja no compartida...
-        print(f"[registro] no se ha podido abrir la hoja de cálculo: {exc}")
-        return None
+        with smtplib.SMTP_SSL(servidor, puerto, timeout=15) as smtp:
+            smtp.login(remitente, contrasena)
+            smtp.send_message(mensaje)
+        return True
+    except Exception as exc:
+        print(f"[registro] fallo al enviar el aviso por correo: {exc}")
+        return False
 
 
 def registrar_lead(lead: dict[str, str]) -> str:
-    """Persiste el lead y devuelve el destino usado: sheets | csv | log.
+    """Persiste el lead y devuelve el destino usado: email | csv | log.
 
     Nunca lanza: si el registro falla, el visitante no debe quedarse fuera por
     un problema de nuestra infraestructura. El peor caso deja el lead en los
@@ -1303,13 +1326,8 @@ def registrar_lead(lead: dict[str, str]) -> str:
     """
     fila = [lead.get(columna, "") for columna in COLUMNAS_LEAD]
 
-    hoja = _hoja_de_leads()
-    if hoja is not None:
-        try:
-            hoja.append_row(fila, value_input_option="USER_ENTERED")
-            return "sheets"
-        except Exception as exc:
-            print(f"[registro] fallo al escribir en Sheets: {exc}")
+    if _enviar_aviso(lead):
+        return "email"
 
     try:
         nuevo = not os.path.exists(RUTA_LEADS_CSV)
@@ -1404,8 +1422,9 @@ decisiones automatizadas.
 **Legitimación:** tu consentimiento expreso, que puedes retirar en cualquier
 momento.
 
-**Destinatarios:** los datos se almacenan en Google Sheets (Google Ireland
-Ltd.) como encargado del tratamiento. No se ceden a terceros.
+**Destinatarios:** no se ceden a terceros. Los datos se envían por correo
+electrónico al buzón del responsable, alojado en Gmail (Google Ireland Ltd.,
+proveedor de correo).
 
 **Conservación:** {CONSERVACION_DATOS}.
 
@@ -1487,7 +1506,7 @@ def render_puerta() -> None:
         return
 
     # Marca temporal del servidor en hora peninsular: el visitante no la
-    # introduce ni la ve, solo aparece en la hoja de cálculo.
+    # introduce ni la ve, solo aparece en el aviso que se envía por correo.
     ahora = datetime.now(ZONA_HORARIA)
     lead = {
         "fecha": ahora.strftime("%d/%m/%Y"),

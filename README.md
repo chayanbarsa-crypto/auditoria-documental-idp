@@ -92,7 +92,7 @@ La demo está **cerrada tras un formulario**: sin identificarse no se accede a
 la herramienta. Si faltan campos obligatorios salta un banner que impide el
 paso y enumera lo que falta.
 
-Columnas que llegan a la hoja de cálculo:
+Datos que llegan en cada aviso:
 
 | Columna | Origen |
 |---|---|
@@ -112,22 +112,30 @@ puede agrupar y contar sin limpiar los datos después.
    muestra un aviso en el propio formulario.
 2. Revisa `EMAIL_CONTACTO_RGPD` y `CONSERVACION_DATOS`.
 
-### Configurar Google Sheets
+### Configurar el aviso por correo
 
-1. En <https://console.cloud.google.com> crea un proyecto.
-2. *APIs y servicios* → habilita **Google Sheets API**.
-3. *Credenciales* → *Crear credenciales* → **Cuenta de servicio**.
-4. En la cuenta creada: *Claves* → *Añadir clave* → **JSON** (se descarga).
-5. Crea la hoja de cálculo y **compártela con el `client_email`** de la cuenta
-   de servicio, con permiso de **Editor**. Sin este paso, la escritura falla.
-6. Copia el contenido de `.streamlit/secrets.toml.example`, rellénalo con los
-   valores del JSON y pégalo en Streamlit Cloud → *Manage app* → *Settings* →
-   *Secrets*. **Nunca subas ese fichero al repositorio.**
+Cada visita llega como un email al buzón del responsable. El envío usa
+`smtplib` de la librería estándar: no añade ninguna dependencia.
+
+1. La cuenta de Gmail debe tener la **verificación en dos pasos** activada
+   (<https://myaccount.google.com> → *Seguridad*). Sin 2FA no existe la opción
+   siguiente.
+2. Entra en <https://myaccount.google.com/apppasswords> y crea una
+   **contraseña de aplicación**. Google muestra 16 letras en 4 bloques.
+3. Copia el contenido de `.streamlit/secrets.toml.example`, pega ahí esas 16
+   letras **sin espacios** y llévalo a Streamlit Cloud → *Manage app* →
+   *Settings* → *Secrets*. **Nunca subas ese fichero al repositorio.**
+
+El correo lleva `Reply-To` con la dirección del visitante: respondiendo al
+aviso le escribes directamente.
 
 Sin credenciales configuradas la app no se rompe: guarda los leads en
 `leads_local.csv`, que sirve ejecutando en local. **En Streamlit Cloud ese
-fichero se pierde en cada redespliegue**, así que la hoja de cálculo no es
+fichero se pierde en cada redespliegue**, así que configurar el correo no es
 opcional si quieres conservar los registros.
+
+> Una contraseña de aplicación permite enviar correo en nombre de esa cuenta.
+> Si se filtra, revócala desde la misma pantalla de Google.
 
 Para saltarte la puerta mientras desarrollas: `DEMO_SIN_REGISTRO=1`.
 

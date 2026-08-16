@@ -17,8 +17,8 @@ anthropic>=0.116
 # Carga de ANTHROPIC_API_KEY desde .env (opcional)
 python-dotenv>=1.0
 
-# Registro de visitas en Google Sheets
-gspread>=6.0
-google-auth>=2.30
+# El aviso de cada visita se envía por SMTP con la librería estándar:
+# no hace falta ninguna dependencia adicional.
+
 # Zona horaria Europe/Madrid (Windows no trae base de datos de husos)
 tzdata>=2024.1
