@@ -1,0 +1,804 @@
+<title>Panel LuzIA</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+
+<style>
+:root {
+  color-scheme: light;
+  --plane:      #f4f4f1;
+  --surface:    #fcfcfb;
+  --sunk:       #eeeeea;
+  --ink:        #0b0b0b;
+  --ink-2:      #52514e;
+  --ink-3:      #898781;
+  --hairline:   #e1e0d9;
+  --ring:       rgba(11,11,11,0.10);
+  --accent:     #1c5cab;
+  --serie:      #2a78d6;
+  --serie-2:    #eb6834;
+  --serie-3:    #1baf7a;
+  --bien:       #0ca30c;
+  --regular:    #fab219;
+  --mal:        #d03b3b;
+  --bien-txt:   #006300;
+  --regular-txt:#8a5a00;
+  --mal-txt:    #b02a2a;
+  --sombra:     0 1px 2px rgba(11,11,11,0.05);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --plane:    #0d0d0d;
+    --surface:  #1a1a19;
+    --sunk:     #232321;
+    --ink:      #ffffff;
+    --ink-2:    #c3c2b7;
+    --ink-3:    #898781;
+    --hairline: #2c2c2a;
+    --ring:     rgba(255,255,255,0.10);
+    --accent:   #6da7ec;
+    --serie:    #3987e5;
+    --serie-2:  #d95926;
+    --serie-3:  #199e70;
+    --bien-txt: #0ca30c;
+    --regular-txt:#fab219;
+    --mal-txt:  #e66767;
+    --sombra:   none;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --plane:    #0d0d0d;
+  --surface:  #1a1a19;
+  --sunk:     #232321;
+  --ink:      #ffffff;
+  --ink-2:    #c3c2b7;
+  --ink-3:    #898781;
+  --hairline: #2c2c2a;
+  --ring:     rgba(255,255,255,0.10);
+  --accent:   #6da7ec;
+  --serie:    #3987e5;
+  --serie-2:  #d95926;
+  --serie-3:  #199e70;
+  --bien-txt: #0ca30c;
+  --regular-txt:#fab219;
+  --mal-txt:  #e66767;
+  --sombra:   none;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--plane);
+  color: var(--ink);
+  font-family: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.envoltorio { max-width: 1240px; margin: 0 auto; padding: 0 24px 72px; }
+
+/* ---------- cabecera ---------- */
+.cabecera { padding: 40px 0 20px; }
+.eyebrow {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 11.5px; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--ink-3); margin: 0 0 10px;
+}
+h1 {
+  font-family: Archivo, system-ui, sans-serif;
+  font-weight: 700; font-size: clamp(28px, 4vw, 40px); letter-spacing: -0.02em;
+  margin: 0; text-wrap: balance;
+}
+.subtitulo { color: var(--ink-2); margin: 8px 0 0; max-width: 68ch; }
+
+/* ---------- filtros ---------- */
+.filtros {
+  position: sticky; top: 0; z-index: 30;
+  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px 18px;
+  padding: 14px 18px; margin: 8px 0 26px;
+  background: var(--surface);
+  border: 1px solid var(--ring); border-radius: 10px; box-shadow: var(--sombra);
+}
+.campo { display: flex; flex-direction: column; gap: 6px; }
+.campo > span {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3);
+}
+.segmentado { display: flex; background: var(--sunk); border-radius: 8px; padding: 3px; gap: 3px; }
+.segmentado button {
+  font: inherit; font-size: 13.5px; font-weight: 500;
+  border: 0; background: transparent; color: var(--ink-2);
+  padding: 6px 13px; border-radius: 6px; cursor: pointer;
+}
+.segmentado button[aria-pressed="true"] {
+  background: var(--surface); color: var(--ink);
+  box-shadow: 0 1px 2px rgba(11,11,11,0.12); font-weight: 600;
+}
+select, input[type="search"] {
+  font: inherit; font-size: 14px; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--hairline);
+  border-radius: 8px; padding: 7px 10px; min-width: 170px;
+}
+button:focus-visible, select:focus-visible, input:focus-visible, .fila-chat:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+.reiniciar {
+  font: inherit; font-size: 13.5px; color: var(--accent);
+  background: none; border: 0; cursor: pointer; padding: 7px 4px; text-decoration: underline;
+}
+.recuento-filtro { margin-left: auto; font-size: 13px; color: var(--ink-2); align-self: center; }
+
+/* ---------- rejilla ---------- */
+.rejilla { display: grid; grid-template-columns: repeat(12, 1fr); gap: 18px; align-items: start; }
+.tarjeta {
+  grid-column: span 12;
+  background: var(--surface); border: 1px solid var(--ring);
+  border-radius: 12px; padding: 20px; box-shadow: var(--sombra);
+}
+.c4 { grid-column: span 4; } .c5 { grid-column: span 5; }
+.c6 { grid-column: span 6; } .c7 { grid-column: span 7; } .c8 { grid-column: span 8; }
+@media (max-width: 900px) { .c4, .c5, .c6, .c7, .c8 { grid-column: span 12; } }
+
+.titulo-tarjeta {
+  font-family: Archivo, system-ui, sans-serif; font-weight: 600; font-size: 16px;
+  letter-spacing: -0.01em; margin: 0;
+}
+.nota { font-size: 12.5px; color: var(--ink-3); margin: 4px 0 0; }
+.cabecera-tarjeta { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 16px; }
+
+/* ---------- KPIs ---------- */
+.kpis { display: grid; grid-template-columns: repeat(5, 1fr); gap: 18px; margin-bottom: 18px; }
+@media (max-width: 1000px) { .kpis { grid-template-columns: repeat(2, 1fr); } }
+.kpi {
+  background: var(--surface); border: 1px solid var(--ring); border-radius: 12px;
+  padding: 18px; box-shadow: var(--sombra); display: flex; flex-direction: column; gap: 6px;
+}
+.kpi.destacado { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent), var(--sombra); }
+.kpi h3 {
+  font-family: "IBM Plex Mono", ui-monospace, monospace; font-weight: 400;
+  font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--ink-3); margin: 0; text-wrap: balance;
+}
+.cifra {
+  font-family: Archivo, system-ui, sans-serif; font-weight: 700;
+  font-size: 38px; line-height: 1.05; letter-spacing: -0.03em;
+}
+.cifra small { font-size: 20px; font-weight: 600; margin-left: 1px; }
+.pie-kpi { font-size: 12.5px; color: var(--ink-2); }
+
+/* ---------- barras ---------- */
+.pila { display: flex; height: 100%; width: 100%; gap: 2px; }
+.pila > i { display: block; height: 100%; border-radius: 2px; }
+.barra-100 { height: 26px; border-radius: 4px; overflow: hidden; }
+
+.leyenda { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 14px; }
+.leyenda span { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--ink-2); }
+.punto { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+
+.filas { display: flex; flex-direction: column; gap: 10px; }
+.fila { display: grid; grid-template-columns: minmax(140px, 36%) 1fr auto; align-items: center; gap: 12px; }
+.fila .etiqueta {
+  font-size: 13.5px; line-height: 1.25; color: var(--ink-2);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.pista { height: 18px; background: var(--sunk); border-radius: 4px; overflow: hidden; }
+.pista .relleno { height: 100%; border-radius: 4px; background: var(--serie); }
+.valor {
+  font-family: "IBM Plex Mono", ui-monospace, monospace; font-variant-numeric: tabular-nums;
+  font-size: 13px; color: var(--ink-2); min-width: 78px; text-align: right;
+}
+.chip {
+  display: inline-block; font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 11.5px; padding: 1px 7px; border-radius: 999px;
+  border: 1px solid currentColor; font-variant-numeric: tabular-nums;
+}
+.chip.bien { color: var(--bien-txt); } .chip.regular { color: var(--regular-txt); } .chip.mal { color: var(--mal-txt); }
+
+/* ---------- columnas por mes ---------- */
+.columnas { display: flex; align-items: flex-end; gap: 22px; min-height: 248px; padding-top: 26px; }
+.mes { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; gap: 8px; position: relative; }
+.mes .torre { display: flex; flex-direction: column-reverse; gap: 2px; width: 100%; max-width: 96px; margin: 0 auto; }
+.mes .torre > i { display: block; border-radius: 2px; }
+.mes .torre > i:last-child { border-radius: 2px 2px 4px 4px; }
+.mes .encabezado {
+  position: absolute; top: -24px; left: 0; right: 0; text-align: center;
+  font-family: Archivo, system-ui, sans-serif; font-weight: 600; font-size: 15px;
+}
+.mes .pie {
+  text-align: center; font-size: 12.5px; color: var(--ink-2);
+  border-top: 1px solid var(--hairline); padding-top: 7px;
+}
+.mes .pie b { display: block; color: var(--ink); font-weight: 600; text-transform: capitalize; font-size: 13.5px; }
+
+/* ---------- motivos ---------- */
+.motivos { display: flex; flex-direction: column; }
+.motivo { border-top: 1px solid var(--hairline); padding: 12px 0; display: grid; grid-template-columns: 46px 1fr; gap: 14px; }
+.motivo:first-child { border-top: 0; padding-top: 0; }
+.motivo .cuenta {
+  font-family: Archivo, system-ui, sans-serif; font-weight: 700; font-size: 20px;
+  color: var(--mal-txt); font-variant-numeric: tabular-nums; text-align: right;
+}
+.motivo p { margin: 0; font-size: 13.5px; color: var(--ink-2); }
+
+/* ---------- tabla ---------- */
+.envoltura-tabla { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+th {
+  text-align: left; font-family: "IBM Plex Mono", ui-monospace, monospace; font-weight: 500;
+  font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3);
+  padding: 0 12px 8px 0; border-bottom: 1px solid var(--hairline); white-space: nowrap;
+}
+td { padding: 11px 12px 11px 0; border-bottom: 1px solid var(--hairline); vertical-align: top; color: var(--ink-2); }
+td.compacto { font-family: "IBM Plex Mono", ui-monospace, monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
+td .categoria { color: var(--ink); font-weight: 500; }
+.resumen { max-width: 52ch; }
+.resumen .texto.plegado { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.resumen .motivo-fila { display: block; margin-top: 6px; color: var(--mal-txt); }
+.fila-chat { cursor: pointer; }
+.fila-chat:hover td { background: var(--sunk); }
+.mas {
+  font: inherit; font-size: 14px; margin-top: 16px; width: 100%;
+  background: var(--sunk); color: var(--ink); border: 1px solid var(--hairline);
+  border-radius: 8px; padding: 10px; cursor: pointer;
+}
+.vacio { color: var(--ink-3); font-size: 14px; padding: 24px 0; text-align: center; }
+
+/* ---------- tooltip ---------- */
+#tooltip {
+  position: fixed; z-index: 60; pointer-events: none; opacity: 0; transition: opacity .1s;
+  background: var(--ink); color: var(--surface); font-size: 12.5px; line-height: 1.4;
+  padding: 7px 10px; border-radius: 7px; max-width: 280px; box-shadow: 0 4px 14px rgba(0,0,0,.2);
+}
+#tooltip b { color: inherit; }
+
+.seccion {
+  font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11px;
+  letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3);
+  margin: 34px 0 -4px; padding-top: 8px; border-top: 1px solid var(--hairline);
+}
+.pie-pagina { margin-top: 40px; font-size: 12.5px; color: var(--ink-3); max-width: 80ch; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="envoltorio">
+  <header class="cabecera">
+    <p class="eyebrow">LuzIA · Chats de instaladores · Fenie Energía</p>
+    <h1>Panel de resolución de LuzIA</h1>
+    <p class="subtitulo" id="subtitulo"></p>
+  </header>
+
+  <div class="filtros">
+    <label class="campo">
+      <span>Tipo de chat</span>
+      <span class="segmentado" id="f-tipo" role="group" aria-label="Tipo de chat"></span>
+    </label>
+    <label class="campo"><span>Mes</span><select id="f-mes"></select></label>
+    <label class="campo"><span>Línea de negocio</span><select id="f-bl"></select></label>
+    <label class="campo"><span>Categoría principal</span><select id="f-cat"></select></label>
+    <button class="reiniciar" id="f-reset" type="button">Quitar filtros</button>
+    <span class="recuento-filtro" id="recuento"></span>
+  </div>
+
+  <div class="kpis" id="kpis"></div>
+
+  <div class="rejilla">
+    <section class="tarjeta c7">
+      <div class="cabecera-tarjeta">
+        <div>
+          <h2 class="titulo-tarjeta">Evolución mes a mes</h2>
+          <p class="nota" id="nota-meses"></p>
+        </div>
+      </div>
+      <div class="columnas" id="grafico-meses"></div>
+      <div class="leyenda" id="leyenda-estado"></div>
+    </section>
+
+    <section class="tarjeta c5">
+      <div class="cabecera-tarjeta">
+        <div>
+          <h2 class="titulo-tarjeta">Real frente a usuario de pruebas</h2>
+          <p class="nota">Comparativa fija: no depende del filtro de tipo.</p>
+        </div>
+      </div>
+      <div id="comparativa"></div>
+    </section>
+
+    <p class="seccion" style="grid-column: span 12;">Qué preguntan</p>
+
+    <section class="tarjeta c6">
+      <div class="cabecera-tarjeta">
+        <div>
+          <h2 class="titulo-tarjeta">Categoría principal</h2>
+          <p class="nota">Volumen y estado de resolución por categoría.</p>
+        </div>
+      </div>
+      <div class="filas" id="grafico-cat"></div>
+    </section>
+
+    <section class="tarjeta c6">
+      <div class="cabecera-tarjeta">
+        <div>
+          <h2 class="titulo-tarjeta">Subcategoría</h2>
+          <p class="nota">Las 12 consultas más frecuentes por subtipo.</p>
+        </div>
+      </div>
+      <div class="filas" id="grafico-sub"></div>
+    </section>
+
+    <section class="tarjeta c6">
+      <div class="cabecera-tarjeta"><h2 class="titulo-tarjeta">Línea de negocio</h2></div>
+      <div class="filas" id="grafico-bl"></div>
+    </section>
+
+    <section class="tarjeta c6">
+      <div class="cabecera-tarjeta"><h2 class="titulo-tarjeta">Categoría general</h2></div>
+      <div class="filas" id="grafico-gc"></div>
+    </section>
+
+    <p class="seccion" style="grid-column: span 12;">Cómo termina la conversación</p>
+
+    <section class="tarjeta c4">
+      <div class="cabecera-tarjeta"><h2 class="titulo-tarjeta">Quién cierra el chat</h2></div>
+      <div class="filas" id="grafico-fin"></div>
+    </section>
+
+    <section class="tarjeta c4">
+      <div class="cabecera-tarjeta"><h2 class="titulo-tarjeta">Sentimiento al cerrar</h2></div>
+      <div class="filas" id="grafico-sent"></div>
+    </section>
+
+    <section class="tarjeta c4">
+      <div class="cabecera-tarjeta">
+        <div>
+          <h2 class="titulo-tarjeta">Petición de agente</h2>
+          <p class="nota">Chats que acaban pidiendo una persona.</p>
+        </div>
+      </div>
+      <div id="grafico-agente"></div>
+    </section>
+
+    <section class="tarjeta c7">
+      <div class="cabecera-tarjeta">
+        <div>
+          <h2 class="titulo-tarjeta">Por qué no resuelve</h2>
+          <p class="nota" id="nota-motivos"></p>
+        </div>
+      </div>
+      <div class="motivos" id="grafico-motivos"></div>
+    </section>
+
+    <section class="tarjeta c5">
+      <div class="cabecera-tarjeta">
+        <div>
+          <h2 class="titulo-tarjeta">Instaladores más activos</h2>
+          <p class="nota">Chats por usuario en la selección actual.</p>
+        </div>
+      </div>
+      <div class="filas" id="grafico-instaladores"></div>
+    </section>
+
+    <section class="tarjeta">
+      <div class="cabecera-tarjeta">
+        <div>
+          <h2 class="titulo-tarjeta">Detalle de conversaciones</h2>
+          <p class="nota">Pulsa una fila para desplegar el resumen completo.</p>
+        </div>
+        <input type="search" id="buscador" placeholder="Buscar en resúmenes y motivos…" aria-label="Buscar">
+      </div>
+      <div class="envoltura-tabla">
+        <table>
+          <thead>
+            <tr>
+              <th>Fecha</th><th>Estado</th><th>Categoría</th><th>Subcategoría</th>
+              <th>Línea</th><th>Instalador</th><th>Resumen</th>
+            </tr>
+          </thead>
+          <tbody id="cuerpo-tabla"></tbody>
+        </table>
+      </div>
+      <p class="vacio" id="tabla-vacia" hidden>Ningún chat cumple estos filtros.</p>
+      <button class="mas" id="ver-mas" type="button" hidden>Ver más</button>
+    </section>
+  </div>
+
+  <p class="pie-pagina" id="pie"></p>
+</div>
+
+<div id="tooltip" role="status" aria-live="polite"></div>
+
+<script id="datos" type="application/json">/*__DATOS__*/</script>
+
+<script>
+(function () {
+  "use strict";
+
+  const DATOS  = JSON.parse(document.getElementById("datos").textContent);
+  const FILAS  = DATOS.filas;
+  const ESTADOS = [
+    { clave: "RESUELTA",              texto: "Resuelta",              corto: "Resuelta", color: "var(--bien)",    tono: "bien" },
+    { clave: "PARCIALMENTE RESUELTA", texto: "Parcialmente resuelta", corto: "Parcial",  color: "var(--regular)", tono: "regular" },
+    { clave: "NO RESUELTA",           texto: "No resuelta",           corto: "Sin resolver", color: "var(--mal)", tono: "mal" }
+  ];
+
+  const filtro = { tipo: "REAL", mes: "", bl: "", cat: "", busca: "" };
+  let limiteTabla = 30;
+
+  /* ---------- utilidades ---------- */
+  const num = n => n.toLocaleString("es-ES");
+  const pct = (parte, total) => (total ? (parte / total) * 100 : 0);
+  const p1  = v => v.toFixed(1).replace(".", ",");
+  const p0  = v => Math.round(v);
+  const esc = t => String(t == null ? "" : t).replace(/[&<>"']/g,
+    c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  function contar(filas, campo) {
+    const m = new Map();
+    filas.forEach(f => {
+      const v = f[campo];
+      if (v == null || v === "") return;
+      m.set(v, (m.get(v) || 0) + 1);
+    });
+    return [...m.entries()].sort((a, b) => b[1] - a[1]);
+  }
+
+  function porEstado(filas) {
+    return ESTADOS.map(e => filas.filter(f => f.st === e.clave).length);
+  }
+
+  const TRADUCE = {
+    Bot: "LuzIA (bot)", EndUser: "El instalador", Agent: "Un agente humano",
+    NEUTRAL: "Neutral", POSITIVO: "Positivo", NEGATIVO: "Negativo"
+  };
+  const legible = v => TRADUCE[v] || v;
+
+  function tono(porcentaje) {
+    return porcentaje >= 70 ? "bien" : porcentaje >= 50 ? "regular" : "mal";
+  }
+
+  /* ---------- selección ---------- */
+  function seleccion(omitir) {
+    return FILAS.filter(f =>
+      (omitir === "tipo" || !filtro.tipo || f.tipo === filtro.tipo) &&
+      (omitir === "mes"  || !filtro.mes  || f.mes  === filtro.mes) &&
+      (!filtro.bl  || f.bl  === filtro.bl) &&
+      (!filtro.cat || f.cat === filtro.cat));
+  }
+
+  /* ---------- controles ---------- */
+  function opciones(select, valores, etiquetaTodos) {
+    select.innerHTML = `<option value="">${etiquetaTodos}</option>` +
+      valores.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join("");
+  }
+
+  function montarFiltros() {
+    const tipos = [
+      { v: "REAL",   t: "Reales" },
+      { v: "PRUEBA", t: "Pruebas" },
+      { v: "",       t: "Todos" }
+    ];
+    const cont = document.getElementById("f-tipo");
+    cont.innerHTML = tipos.map(o =>
+      `<button type="button" data-valor="${o.v}" aria-pressed="${o.v === filtro.tipo}">${o.t}</button>`).join("");
+    cont.addEventListener("click", ev => {
+      const b = ev.target.closest("button");
+      if (!b) return;
+      filtro.tipo = b.dataset.valor;
+      [...cont.children].forEach(x => x.setAttribute("aria-pressed", x === b));
+      pintar();
+    });
+
+    opciones(document.getElementById("f-mes"), DATOS.meses, "Todos los meses");
+    opciones(document.getElementById("f-bl"), contar(FILAS, "bl").map(x => x[0]), "Todas las líneas");
+    opciones(document.getElementById("f-cat"), contar(FILAS, "cat").map(x => x[0]), "Todas las categorías");
+
+    const enlaza = (id, clave) => document.getElementById(id).addEventListener("change", ev => {
+      filtro[clave] = ev.target.value; limiteTabla = 30; pintar();
+    });
+    enlaza("f-mes", "mes"); enlaza("f-bl", "bl"); enlaza("f-cat", "cat");
+
+    document.getElementById("f-reset").addEventListener("click", () => {
+      filtro.tipo = "REAL"; filtro.mes = ""; filtro.bl = ""; filtro.cat = ""; filtro.busca = "";
+      document.getElementById("f-mes").value = "";
+      document.getElementById("f-bl").value = "";
+      document.getElementById("f-cat").value = "";
+      document.getElementById("buscador").value = "";
+      [...document.getElementById("f-tipo").children]
+        .forEach(x => x.setAttribute("aria-pressed", x.dataset.valor === "REAL"));
+      limiteTabla = 30; pintar();
+    });
+
+    document.getElementById("buscador").addEventListener("input", ev => {
+      filtro.busca = ev.target.value.trim().toLowerCase();
+      limiteTabla = 30; pintarTabla();
+    });
+  }
+
+  /* ---------- tooltip ---------- */
+  const tip = document.getElementById("tooltip");
+  document.addEventListener("mousemove", ev => {
+    const objetivo = ev.target.closest("[data-tip]");
+    if (!objetivo) { tip.style.opacity = 0; return; }
+    tip.innerHTML = objetivo.dataset.tip;
+    tip.style.opacity = 1;
+    const caja = tip.getBoundingClientRect();
+    let x = ev.clientX + 14, y = ev.clientY + 16;
+    if (x + caja.width > innerWidth - 8) x = ev.clientX - caja.width - 14;
+    if (y + caja.height > innerHeight - 8) y = ev.clientY - caja.height - 14;
+    tip.style.left = x + "px"; tip.style.top = y + "px";
+  });
+
+  /* ---------- KPIs ---------- */
+  function pintarKpis(filas) {
+    const total = filas.length;
+    const [res, par, no] = porEstado(filas);
+    const pide = filas.filter(f => f.req === 1).length;
+    const tarjetas = [
+      {
+        titulo: "Chats analizados", cifra: num(total), unidad: "",
+        pie: filtro.tipo === "REAL" ? "Excluye al usuario de pruebas"
+           : filtro.tipo === "PRUEBA" ? "Solo " + DATOS.usuarioPruebas.toLowerCase()
+           : "Reales y pruebas juntos"
+      },
+      {
+        titulo: "Porcentaje de acierto", cifra: p1(pct(res, total)), unidad: "%",
+        pie: num(res) + " chats resueltos del todo", destacado: true
+      },
+      {
+        titulo: "Acierto con parciales", cifra: p1(pct(res + par, total)), unidad: "%",
+        pie: num(par) + " chats resueltos a medias"
+      },
+      {
+        titulo: "Sin resolver", cifra: p1(pct(no, total)), unidad: "%",
+        pie: num(no) + " chats que LuzIA no cerró"
+      },
+      {
+        titulo: "Solicita agente", cifra: p1(pct(pide, total)), unidad: "%",
+        pie: num(pide) + " chats derivados a persona"
+      }
+    ];
+    document.getElementById("kpis").innerHTML = tarjetas.map(t => `
+      <article class="kpi${t.destacado ? " destacado" : ""}">
+        <h3>${t.titulo}</h3>
+        <p class="cifra">${t.cifra}${t.unidad ? `<small>${t.unidad}</small>` : ""}</p>
+        <p class="pie-kpi">${esc(t.pie)}</p>
+      </article>`).join("");
+  }
+
+  /* ---------- evolución mensual ---------- */
+  function cobertura(mes) {
+    const dias = FILAS.filter(f => f.mes === mes && f.dia).map(f => f.dia);
+    return dias.length ? `${Math.min(...dias)}–${Math.max(...dias)}` : "—";
+  }
+
+  function pintarMeses(filas) {
+    const meses = DATOS.meses;
+    const datos = meses.map(m => {
+      const f = filas.filter(x => x.mes === m);
+      return { mes: m, total: f.length, reparto: porEstado(f) };
+    });
+    const techo = Math.max(1, ...datos.map(d => d.total));
+
+    document.getElementById("grafico-meses").innerHTML = datos.map(d => {
+      const acierto = pct(d.reparto[0], d.total);
+      const torre = ESTADOS.map((e, i) => {
+        if (!d.reparto[i]) return "";
+        const alto = Math.max(4, (d.reparto[i] / techo) * 160);
+        const tt = `<b>${esc(e.texto)}</b><br>${num(d.reparto[i])} chats · ${p1(pct(d.reparto[i], d.total))}% de ${esc(d.mes)}`;
+        return `<i style="height:${alto}px;background:${e.color}" data-tip="${tt}"></i>`;
+      }).join("");
+      return `<div class="mes">
+          <span class="encabezado">${p0(acierto)}%</span>
+          <div class="torre">${torre}</div>
+          <div class="pie"><b>${esc(d.mes)}</b>${num(d.total)} chats<br>días ${cobertura(d.mes)}</div>
+        </div>`;
+    }).join("");
+
+    document.getElementById("leyenda-estado").innerHTML = ESTADOS.map(e =>
+      `<span><i class="punto" style="background:${e.color}"></i>${e.texto}</span>`).join("");
+    document.getElementById("nota-meses").textContent =
+      "La cifra sobre cada columna es el porcentaje de chats resueltos del todo. Los días cubiertos no son iguales en todos los meses.";
+  }
+
+  /* ---------- real vs pruebas ---------- */
+  function pintarComparativa() {
+    const base = FILAS.filter(f =>
+      (!filtro.mes || f.mes === filtro.mes) &&
+      (!filtro.bl  || f.bl  === filtro.bl) &&
+      (!filtro.cat || f.cat === filtro.cat));
+    const grupos = [
+      { texto: "Chats reales", filas: base.filter(f => f.tipo === "REAL") },
+      { texto: "Usuario de pruebas", filas: base.filter(f => f.tipo === "PRUEBA") }
+    ];
+    document.getElementById("comparativa").innerHTML = grupos.map(g => {
+      const total = g.filas.length;
+      const reparto = porEstado(g.filas);
+      const acierto = pct(reparto[0], total);
+      const tramos = ESTADOS.map((e, i) => {
+        if (!reparto[i]) return "";
+        const tt = `<b>${esc(e.texto)}</b><br>${num(reparto[i])} chats · ${p1(pct(reparto[i], total))}%`;
+        return `<i style="flex:${reparto[i]};background:${e.color}" data-tip="${tt}"></i>`;
+      }).join("");
+      return `<div style="margin-bottom:22px">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">
+            <span style="font-size:13.5px;color:var(--ink-2)">${g.texto} · ${num(total)}</span>
+            <span class="chip ${tono(acierto)}">${p1(acierto)}% resueltas</span>
+          </div>
+          <div class="barra-100"><div class="pila">${tramos || '<i style="flex:1;background:var(--sunk)"></i>'}</div></div>
+        </div>`;
+    }).join("") + `
+      <div class="fila" style="grid-template-columns:1fr auto;border-top:1px solid var(--hairline);padding-top:14px">
+        <span class="etiqueta">Piden agente humano</span>
+        <span class="valor" style="min-width:auto">${grupos.map(g =>
+          `${esc(g.texto.split(" ")[0].toLowerCase())} ${p1(pct(g.filas.filter(f => f.req === 1).length, g.filas.length))}%`).join(" · ")}</span>
+      </div>
+      <p class="nota">El usuario «${esc(DATOS.usuarioPruebas)}» agrupa las pruebas internas; queda fuera del acierto real.</p>`;
+  }
+
+  /* ---------- barras apiladas por dimensión ---------- */
+  function barrasApiladas(destino, filas, campo, tope) {
+    const grupos = contar(filas, campo).slice(0, tope);
+    const techo = Math.max(1, ...grupos.map(g => g[1]));
+    document.getElementById(destino).innerHTML = grupos.map(([clave, total]) => {
+      const sub = filas.filter(f => f[campo] === clave);
+      const reparto = porEstado(sub);
+      const acierto = pct(reparto[0], total);
+      const tramos = ESTADOS.map((e, i) => {
+        if (!reparto[i]) return "";
+        const tt = `<b>${esc(clave)}</b><br>${esc(e.texto)}: ${num(reparto[i])} · ${p1(pct(reparto[i], total))}%`;
+        return `<i style="flex:${reparto[i]};background:${e.color}" data-tip="${tt}"></i>`;
+      }).join("");
+      return `<div class="fila">
+          <span class="etiqueta" title="${esc(clave)}">${esc(clave)}</span>
+          <div class="pista" style="width:${Math.max(6, (total / techo) * 100)}%;background:transparent">
+            <div class="pila">${tramos}</div>
+          </div>
+          <span class="valor">${num(total)} · <span class="chip ${tono(acierto)}">${p0(acierto)}%</span></span>
+        </div>`;
+    }).join("") || '<p class="vacio">Sin datos con estos filtros.</p>';
+  }
+
+  /* ---------- barras simples ---------- */
+  function barrasSimples(destino, grupos, total, colores) {
+    const techo = Math.max(1, ...grupos.map(g => g[1]));
+    document.getElementById(destino).innerHTML = grupos.map(([clave, valor], i) => {
+      const color = colores ? colores[i % colores.length] : "var(--serie)";
+      const parte = pct(valor, total);
+      const nombre = legible(clave);
+      const tt = `<b>${esc(nombre)}</b><br>${num(valor)} chats · ${p1(parte)}%`;
+      return `<div class="fila">
+          <span class="etiqueta" title="${esc(nombre)}">${esc(nombre)}</span>
+          <div class="pista" data-tip="${tt}">
+            <div class="relleno" style="width:${(valor / techo) * 100}%;background:${color}"></div>
+          </div>
+          <span class="valor">${num(valor)} · ${p0(parte)}%</span>
+        </div>`;
+    }).join("") || '<p class="vacio">Sin datos con estos filtros.</p>';
+  }
+
+  /* ---------- petición de agente ---------- */
+  function pintarAgente(filas) {
+    const total = filas.length;
+    const pide = filas.filter(f => f.req === 1).length;
+    const porMes = DATOS.meses.map(m => {
+      const f = filas.filter(x => x.mes === m);
+      return [m, f.length ? pct(f.filter(x => x.req === 1).length, f.length) : 0, f.length];
+    });
+    const techo = Math.max(1, ...porMes.map(x => x[1]));
+    document.getElementById("grafico-agente").innerHTML = `
+      <p class="cifra" style="color:var(--serie-2)">${p1(pct(pide, total))}<small>%</small></p>
+      <p class="pie-kpi" style="margin:2px 0 18px">${num(pide)} de ${num(total)} chats piden agente humano</p>
+      <div class="filas">${porMes.map(([m, v, n]) => `
+        <div class="fila">
+          <span class="etiqueta" style="text-transform:capitalize">${esc(m)}</span>
+          <div class="pista" data-tip="<b>${esc(m)}</b><br>${p1(v)}% de ${num(n)} chats">
+            <div class="relleno" style="width:${(v / techo) * 100}%;background:var(--serie-2)"></div>
+          </div>
+          <span class="valor">${p1(v)}%</span>
+        </div>`).join("")}</div>`;
+  }
+
+  /* ---------- motivos de no resolución ---------- */
+  function pintarMotivos(filas) {
+    const sinResolver = filas.filter(f => f.st !== "RESUELTA");
+    const motivos = contar(sinResolver, "nrr").slice(0, 8);
+    document.getElementById("nota-motivos").textContent =
+      `${num(sinResolver.length)} chats sin resolver del todo; ${num(sinResolver.filter(f => f.nrr).length)} traen motivo registrado.`;
+    document.getElementById("grafico-motivos").innerHTML = motivos.map(([texto, n]) =>
+      `<div class="motivo"><span class="cuenta">${num(n)}</span><p>${esc(texto)}</p></div>`).join("")
+      || '<p class="vacio">Ningún motivo registrado con estos filtros.</p>';
+  }
+
+  /* ---------- tabla ---------- */
+  const ORDEN_MES = Object.fromEntries(DATOS.meses.map((m, i) => [m, i]));
+
+  function filasTabla() {
+    const filas = seleccion().slice().sort((a, b) =>
+      (ORDEN_MES[b.mes] - ORDEN_MES[a.mes]) || (b.dia - a.dia));
+    if (!filtro.busca) return filas;
+    return filas.filter(f =>
+      (f.res || "").toLowerCase().includes(filtro.busca) ||
+      (f.nrr || "").toLowerCase().includes(filtro.busca) ||
+      (f.cat || "").toLowerCase().includes(filtro.busca) ||
+      (f.sub || "").toLowerCase().includes(filtro.busca) ||
+      (f.agente || "").toLowerCase().includes(filtro.busca));
+  }
+
+  function pintarTabla() {
+    const filas = filasTabla();
+    const visibles = filas.slice(0, limiteTabla);
+    const cuerpo = document.getElementById("cuerpo-tabla");
+    cuerpo.innerHTML = visibles.map(f => {
+      const e = ESTADOS.find(x => x.clave === f.st) || ESTADOS[2];
+      return `<tr class="fila-chat" tabindex="0">
+        <td class="compacto">${f.dia} ${esc((f.mes || "").slice(0, 3))}</td>
+        <td><span class="chip ${e.tono}">${e.corto}</span></td>
+        <td><span class="categoria">${esc(f.cat || "—")}</span></td>
+        <td>${esc(f.sub || "—")}</td>
+        <td>${esc(f.bl || "—")}</td>
+        <td>${esc(f.agente || "—")}</td>
+        <td class="resumen"><div class="texto plegado">${esc(f.res || "—")}${f.nrr ? `<span class="motivo-fila">Motivo: ${esc(f.nrr)}</span>` : ""}</div></td>
+      </tr>`;
+    }).join("");
+
+    document.getElementById("tabla-vacia").hidden = filas.length > 0;
+    const boton = document.getElementById("ver-mas");
+    boton.hidden = filas.length <= limiteTabla;
+    boton.textContent = `Ver más (${num(filas.length - visibles.length)} chats restantes)`;
+  }
+
+  document.getElementById("ver-mas").addEventListener("click", () => {
+    limiteTabla += 50; pintarTabla();
+  });
+  document.getElementById("cuerpo-tabla").addEventListener("click", ev => {
+    const celda = ev.target.closest("tr")?.querySelector(".resumen .texto");
+    if (celda) celda.classList.toggle("plegado");
+  });
+  document.getElementById("cuerpo-tabla").addEventListener("keydown", ev => {
+    if (ev.key !== "Enter" && ev.key !== " ") return;
+    ev.preventDefault();
+    ev.target.closest("tr")?.querySelector(".resumen .texto")?.classList.toggle("plegado");
+  });
+
+  /* ---------- pintado completo ---------- */
+  function pintar() {
+    const filas = seleccion();
+    const total = filas.length;
+
+    pintarKpis(filas);
+    pintarMeses(filas);
+    pintarComparativa();
+    barrasApiladas("grafico-cat", filas, "cat", 10);
+    barrasSimples("grafico-sub", contar(filas, "sub").slice(0, 12), total);
+    barrasApiladas("grafico-bl", filas, "bl", 8);
+    barrasApiladas("grafico-gc", filas, "gc", 6);
+    barrasSimples("grafico-fin", contar(filas, "end"), total,
+      ["var(--serie)", "var(--serie-2)", "var(--serie-3)"]);
+    barrasSimples("grafico-sent", contar(filas, "sent"), total,
+      ["var(--serie)", "var(--bien)", "var(--mal)"]);
+    pintarAgente(filas);
+    pintarMotivos(filas);
+    barrasSimples("grafico-instaladores", contar(filas, "agente").slice(0, 8), total);
+    pintarTabla();
+
+    document.getElementById("recuento").textContent =
+      `${num(total)} de ${num(FILAS.length)} chats en la selección`;
+  }
+
+  /* ---------- arranque ---------- */
+  document.getElementById("subtitulo").textContent =
+    `Resolución, temas y derivaciones de los chats de LuzIA con instaladores entre el ${DATOS.periodo} de 2026. ` +
+    `${num(FILAS.length)} conversaciones exportadas de Salesforce.`;
+  document.getElementById("pie").textContent =
+    `Los chats del usuario «${DATOS.usuarioPruebas}» son pruebas internas y quedan fuera de la vista por defecto. ` +
+    `El porcentaje de acierto cuenta solo los chats marcados como RESUELTA; el acierto ampliado suma los parcialmente resueltos. ` +
+    `El export arrastra el filtro «día ≥ 8», de modo que faltan los primeros días de cada mes, y agosto termina en el día 18: ` +
+    `los volúmenes mensuales no son comparables entre sí, los porcentajes sí.`;
+
+  montarFiltros();
+  pintar();
+})();
+</script>

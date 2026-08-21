@@ -9,3 +9,8 @@ __pycache__/
 
 # Datos personales de los visitantes: fuera del repositorio.
 leads_local.csv
+
+# Panel de chats de LuzIA: el export y el HTML generado llevan datos de
+# clientes e instaladores, no se suben al repositorio.
+dashboard/salida/
+*.xlsx
